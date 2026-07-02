@@ -152,10 +152,10 @@ The report is the only thing that survives, so anything worth keeping must be in
    would act on and the needs-decision/blocked/done/failed states. No step-by-step
    FYI progress lines; firstmate reads your pane for that.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
-6. If a decision belongs to a human (product choices, destructive actions),
+6. If the answer lives in the repo, its docs, or an experiment you can run, find it and continue instead of escalating.
+   If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {the concrete options, with your recommended default}\` and stop.
    Firstmate will reply with the decision.
-   If the answer lives in the repo, its docs, or an experiment you can run, find it and continue instead of escalating.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -254,10 +254,10 @@ $RULE1
    needs-decision/blocked/done/failed states. No step-by-step FYI progress lines;
    firstmate reads your pane for that.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
-6. If a decision belongs to a human (product choices, destructive actions, ask-user findings),
+6. If the answer lives in the repo, its docs, or an experiment you can run, find it and continue instead of escalating.
+   If a decision belongs to a human (product choices, destructive actions, ask-user findings),
    append \`needs-decision: {the concrete options, with your recommended default}\` and stop.
    Firstmate will reply with the decision.
-   If the answer lives in the repo, its docs, or an experiment you can run, find it and continue instead of escalating.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.

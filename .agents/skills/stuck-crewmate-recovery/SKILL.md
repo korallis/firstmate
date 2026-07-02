@@ -18,7 +18,7 @@ Escalate in order:
 3. If the crewmate is confused or looping, interrupt with the adapter's interrupt key, then redirect with one corrective line.
    For example, for a single-Escape adapter: `bin/fm-send.sh <window> --key Escape`.
 4. Before any relaunch, diagnose the wedge from the pane and the brief.
-   If the crewmate is circling a question the brief cannot answer (a spec gap), do not relaunch the same brief: resolve it yourself when it is technical, or escalate exactly one option-listing question to the captain, then relaunch with the answer appended to the progress note.
+   If the crewmate is circling a question the brief cannot answer (a spec gap), do not relaunch the same brief: resolve it yourself when it is technical, or escalate exactly one option-listing question to the captain, then exit the agent with the adapter's exit command and relaunch with the answer appended to the progress note.
    If the brief is over-scoped (real progress landed, wedged only on the remainder), record what landed and file the remainder as a new smaller task instead of a second relaunch.
    Relaunch the same brief as-is only for execution wedges.
 5. If the crewmate is genuinely wedged after redirection, exit the agent with the adapter's exit command and relaunch with the same brief plus a `progress so far` note appended to it.
