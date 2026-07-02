@@ -408,6 +408,10 @@ Use these signals in order:
 4. One confident match: proceed, but state the project in plain outcome language in your reply ("I'll work on this in `yourapp`") so a wrong guess costs one correction instead of wasted work.
 5. More than one plausible match, or none: ask a one-line question. A misdirected dispatch is recoverable because crewmates work in isolated worktrees, but it is expensive; a question is cheap.
 
+Resolve the task's scope with the same asymmetry.
+When the request admits materially different deliverables, proceed on the most likely reading and state the assumption in your reply (signal 4's pattern); ask only when the readings genuinely fork the deliverable and reading the repo will not discriminate - and make it the one question whose answer does.
+Never ask the captain for details a crewmate can resolve from the repo.
+
 Then resolve the secondmate scope.
 Read `data/secondmates.md` before dispatching and compare the work request to each registered `scope:`.
 Route by the nature of the task, not just the project name.
@@ -435,6 +439,8 @@ Then classify readiness:
 
 Keep dependency judgment coarse: same repo plus overlapping area means serialize; everything else runs parallel.
 For `no-mistakes` projects, the pipeline rebase step absorbs mild overlaps; for other modes, have the crewmate rebase before review or merge if needed.
+
+When one request becomes several tasks, state the partition: each task's scope and any remainder no task covers - file the remainder in the backlog or tell the captain, never drop it silently.
 
 Write the brief per section 11.
 
@@ -572,6 +578,7 @@ With `--force`, teardown is the explicit discard path for child windows, child w
 A scout task follows Intake, Spawn, and Supervise exactly as above - scaffold the brief with `bin/fm-brief.sh <id> <repo> --scout`, spawn with `--scout` - then diverges after the work:
 
 - There is no Validate or PR-ready stage. When the crewmate's status says `done`, read `data/<id>/report.md`.
+- A scout's `done` is a claim, not evidence. Relay routine findings after reading the report, carrying its confidence labels - never present an inferred or single-sourced finding as established. When the findings will drive an expensive-to-reverse decision (a go/no-go, security posture, removing or replacing a subsystem), spawn a second scout as a blind verifier before escalating: its brief carries the claims and their cited evidence only - not the original report's reasoning and not which agent produced it - and it reports each claim supported, partly-supported, or unsupported.
 - Relay the findings to the captain: plain chat for a focused answer, lavish-axi when the report has structure worth a visual (multiple findings, options, a plan).
 - Tear down immediately - no merge gate. `bin/fm-teardown.sh` allows a scout worktree's scratch commits and dirty files once the report exists; if the report is missing, it refuses, because the findings are the work product.
 - Record it in Done with the report path instead of a PR link using `tasks-axi done` when the default tasks-axi backend is active and compatible, otherwise hand-edit `data/backlog.md` and keep Done to the 10 most recent, then re-evaluate the queue and dispatch only queued work whose blockers are gone and whose time/date gate, if any, has arrived.
@@ -776,7 +783,7 @@ For a ship task the definition of done is shaped by the project's delivery mode 
 The no-mistakes brief points to no-mistakes' version-matched guidance and keeps only firstmate-specific wrapper rules for `ask-user` escalation, `--yes` avoidance, and the CI-green done line.
 The scaffold reads the mode via `fm-project-mode.sh`, so you do not pass it.
 Ship briefs also include the project-memory contract: run `bin/fm-ensure-agents-md.sh` when the project already has agent-memory files or when the task produced durable project-intrinsic knowledge, then record proportionate learnings in `AGENTS.md`.
-For scout tasks add `--scout`: the scaffold swaps the definition of done for the report contract (findings to `data/<id>/report.md`, no branch, no push, no PR) and declares the worktree scratch; scout is mode-agnostic.
+For scout tasks add `--scout`: the scaffold swaps the definition of done for the report contract (findings to `data/<id>/report.md` opening with status and coverage, per-finding confidence, verified separated from inferred; no branch, no push, no PR) and declares the worktree scratch; scout is mode-agnostic.
 Scout briefs do not include the project-memory step, because their deliverable is a report rather than a committed project change.
 For secondmates use `bin/fm-brief.sh <id> --secondmate <project>...`.
 The scaffold writes a charter brief instead of a task brief.
@@ -787,6 +794,7 @@ Preserve the requests-from-main-firstmate contract in the charter: marked reques
 Before seeding, loading, handing backlog to, or launching a secondmate home, load `secondmate-provisioning`.
 The status-reporting protocol is intentionally sparse: crewmates append status only for supervisor-actionable phase changes or `needs-decision`/`blocked`/`done`/`failed`, because every append wakes firstmate.
 For any generated brief that still contains `{TASK}`, replace it with a clear task description, acceptance criteria, and any constraints or context the crewmate needs before spawning or seeding.
+For a task unblocked by a completed predecessor, that context names the predecessor's outcome - the merged PR's full URL or the scout report path - not just its id.
 Adjust the other sections only when the task genuinely deviates from the standard ship-a-new-PR shape (e.g. fixing an existing external PR); the scaffold is the contract, not a suggestion.
 
 ## 12. Self-update

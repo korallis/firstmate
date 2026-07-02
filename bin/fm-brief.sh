@@ -153,11 +153,16 @@ The report is the only thing that survives, so anything worth keeping must be in
    FYI progress lines; firstmate reads your pane for that.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision: {the concrete options, with your recommended default}\` and stop.
+   Firstmate will reply with the decision.
+   If the answer lives in the repo, its docs, or an experiment you can run, find it and continue instead of escalating.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
+Open it with \`Status: success|partial\` and a coverage line: what you examined and what you explicitly did not (with counts where countable).
+Tag each finding \`high|med|low\` confidence, and separate what you verified by running or reading from what you inferred.
+A small scout may keep all of this to a few lines, but never omit Status and coverage.
 When the report is complete, append \`done: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
@@ -250,7 +255,9 @@ $RULE1
    firstmate reads your pane for that.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions, ask-user findings),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision: {the concrete options, with your recommended default}\` and stop.
+   Firstmate will reply with the decision.
+   If the answer lives in the repo, its docs, or an experiment you can run, find it and continue instead of escalating.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
