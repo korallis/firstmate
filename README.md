@@ -150,7 +150,7 @@ cd firstmate && claude   # launch your harness here; AGENTS.md takes over
 ```
 
 Run it inside tmux for the best experience: every crewmate window lands in your own session, where you can watch the crew work in real time or type into any window to intervene.
-Outside tmux, default-backend crewmates land in a detached `firstmate` session you can attach to; on the experimental herdr backend, tasks land as tabs in the selected herdr session instead ([docs/herdr-backend.md](docs/herdr-backend.md)).
+Outside tmux, default-backend crewmates land in a detached `firstmate` session you can attach to; on the experimental herdr backend, attach to the selected `HERDR_SESSION` and switch between per-home workspaces - the primary uses `firstmate`, each secondmate uses `2ndmate-<secondmate-id>`, with that home's task tabs inside its own space ([docs/herdr-backend.md](docs/herdr-backend.md)).
 
 ### Keeping this fork current
 
@@ -230,6 +230,7 @@ Claude and grok use the slash form shown here; codex uses the same names with `$
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/afk`             | Enter away-mode supervision: the sub-supervisor self-handles routine wakes in bash and escalates only captain-relevant events as one batched digest, cutting supervision cost while you step away |
 | `/updatefirstmate` | Self-update the running firstmate and its secondmates to the latest from origin with fast-forward-only pulls, then re-read instructions and nudge secondmates |
+| `/stow`            | Sweep the session for uncaptured durable knowledge, route each finding to its disk home per AGENTS.md, file undone next steps to the backlog, and report what is now safe to reset |
 
 Agent-only reference skills (harness adapters, stuck-crewmate recovery, secondmate provisioning, X-mention handling) live under `.agents/skills/` and are loaded by firstmate at the trigger points named in [`AGENTS.md`](AGENTS.md).
 
