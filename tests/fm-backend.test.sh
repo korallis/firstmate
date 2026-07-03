@@ -272,6 +272,43 @@ test_backend_of_selector_matches_explicit_target_meta() {
   pass "fm_backend_of_selector: fm-<id> and matching explicit targets inherit metadata backend"
 }
 
+# --- fm_backend_target_exists: herdr routes through fm_backend_herdr_cli ----
+#
+# Regression guard for the fix that routes fm_backend_target_exists's herdr
+# case through fm_backend_herdr_cli instead of a bare
+# `HERDR_SESSION="$session" herdr pane get "$pane"` call. Per
+# bin/backends/herdr.sh's fm_backend_herdr_cli doc comment and
+# tests/herdr-test-safety.sh, the installed herdr 0.7.1 client does not
+# reliably honor HERDR_SESSION alone once another herdr server is already
+# bound on the machine - only the trailing `--session <name>` flag routes
+# correctly. This asserts the liveness check actually emits that flag, not
+# just that it happens to return the right true/false answer against a fake
+# that ignores session scoping.
+test_target_exists_herdr_routes_through_cli_session_flag() {
+  local dir fb log
+  dir="$TMP_ROOT/target-exists-herdr"; mkdir -p "$dir"; fb="$dir/fakebin"; mkdir -p "$fb"; log="$dir/log"; : > "$log"
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+{ printf 'HERDR_SESSION=%s' "${HERDR_SESSION:-}"; for a in "$@"; do printf '\x1f%s' "$a"; done; printf '\n'; } >> "${FM_HERDR_LOG:?}"
+[ "${1:-}" = pane ] && [ "${2:-}" = get ] && [ "${3:-}" = p-live ] && exit 0
+exit 1
+SH
+  chmod +x "$fb/herdr"
+
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" fm_backend_target_exists herdr "sess-a:p-live"
+  expect_code 0 $? "fm_backend_target_exists should report the live pane as existing"
+  assert_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''get'$'\x1f''p-live'$'\x1f''--session'$'\x1f''sess-a' \
+    "fm_backend_target_exists's herdr case did not append a trailing --session <name> flag (must route through fm_backend_herdr_cli, not a bare HERDR_SESSION call)"
+
+  : > "$log"
+  if PATH="$fb:$PATH" FM_HERDR_LOG="$log" fm_backend_target_exists herdr "sess-a:p-dead"; then
+    fail "fm_backend_target_exists should report a gone pane as not existing"
+  fi
+
+  pass "fm_backend_target_exists: herdr case routes through fm_backend_herdr_cli's --session flag and reports live/dead panes correctly"
+}
+
 # --- old vs new: fm-send.sh --------------------------------------------------
 
 make_send_fakebin() {  # <dir> -> echoes fakebin dir; logs every tmux call to $FM_TMUX_LOG
@@ -654,6 +691,7 @@ test_backend_validate_refuses_unknown
 test_meta_get_and_backend_of_meta
 test_resolve_selector_three_forms
 test_backend_of_selector_matches_explicit_target_meta
+test_target_exists_herdr_routes_through_cli_session_flag
 test_send_conformance_old_vs_new
 test_peek_conformance_old_vs_new
 test_spawn_conformance_old_vs_new
