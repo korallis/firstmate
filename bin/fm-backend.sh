@@ -286,8 +286,10 @@ fm_backend_kill() {  # <backend> <target>
 # fm_backend_busy_state: semantic busy/idle/unknown for backends that expose
 # native agent-state (herdr-addendum "busy state" row - the first backend
 # where this gets real semantics beyond pane-regex). Backends with no such
-# primitive (tmux) report unknown, the fm-watch.sh contract's cue to fall back
-# to its own pane-hash + FM_BUSY_REGEX detection, unchanged from P1.
+# primitive (tmux) report unknown. Callers own the fallback policy: fm-watch.sh
+# uses unknown as the cue for its pane-hash + FM_BUSY_REGEX detection, while
+# fm-crew-state.sh also corroborates native idle verdicts before treating a
+# no-run crew as not busy.
 fm_backend_busy_state() {  # <backend> <target>
   local backend=$1
   shift
@@ -295,5 +297,35 @@ fm_backend_busy_state() {  # <backend> <target>
   case "$backend" in
     herdr) fm_backend_herdr_busy_state "$@" ;;
     *) printf 'unknown' ;;
+  esac
+}
+
+# fm_backend_target_exists: cheap, READ-ONLY existence check - does the
+# recorded TARGET endpoint still exist on BACKEND? Never starts a server or
+# session: for herdr this deliberately queries the pane directly instead of
+# going through fm_backend_herdr_target_ready (which auto-starts the herdr
+# server as a side effect via fm_backend_herdr_server_ensure - fine for an
+# operation that is about to use the pane, wrong for a passive liveness
+# probe). A gone tmux window or an unqueryable herdr pane (server down, pane
+# closed) both simply fail, which IS "does not exist" for this purpose.
+# Mirrors fm-crew-state.sh's pane_readable check; exists here as one shared
+# primitive so callers that only need a fast alive/dead read (recovery
+# digests, the session-start fleet digest) do not re-derive it inline.
+fm_backend_target_exists() {  # <backend> <target>
+  local backend=$1 target=$2 session pane
+  case "$backend" in
+    tmux)
+      tmux display-message -p -t "$target" '#{pane_id}' >/dev/null 2>&1
+      ;;
+    herdr)
+      fm_backend_source herdr || return 1
+      session=${target%%:*}
+      pane=${target#*:}
+      [ -n "$session" ] && [ -n "$pane" ] && [ "$pane" != "$target" ] || return 1
+      fm_backend_herdr_cli "$session" pane get "$pane" >/dev/null 2>&1
+      ;;
+    *)
+      return 1
+      ;;
   esac
 }
