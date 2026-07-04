@@ -11,4 +11,4 @@ config/secondmate-harness
 config/backlog-backend
 config/backend
 config/x-mode.env
-.claude/settings.local.json
+config/cmux-socket-password

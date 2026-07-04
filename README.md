@@ -33,8 +33,9 @@ You can run one coding agent easily.
 But the moment you want three project tasks done in parallel - fixes, investigations, plans, audits - you become a tab-juggler: babysitting sessions, copy-pasting context between repos, forgetting which terminal had the failing test.
 
 firstmate flips the model.
-You talk to a single agent - the first mate - and it runs the crew for you: spawning autonomous agents in visible sessions, giving each a clean git worktree, supervising them to completion, and handing you finished PRs, approved local merges, or standalone investigation reports.
-You are the captain: you make the decisions that matter (what to build, what to merge) and none of the ones that don't.
+You talk to a single agent - the first mate - and it runs the crew for you: spawning autonomous agents in a visible session backend, giving each a clean git worktree, supervising them to completion, and handing you finished PRs, approved local merges, or standalone investigation reports.
+For larger fleets, you can opt in to persistent secondmates: domain supervisors that are still ordinary direct reports, but run from their own isolated firstmate homes.
+There is no app to install; the orchestrator is `AGENTS.md`, bundled firstmate skills, and helper scripts that any terminal coding agent can follow.
 
 This is not an agent harness.
 This is not a single skill.
@@ -62,17 +63,48 @@ Everything below this section is firstmate behavior as it runs in this fork; apa
 ## Features
 
 - **One liaison** - you talk only to the first mate; it dispatches, supervises, escalates only real decisions, and reports plain outcomes.
-- **A visible crew** - every crewmate works in its own tmux window (or experimental herdr tab) you can watch or type into; the first mate reconciles.
-- **Disposable worktrees** - each task runs in a clean [treehouse](https://github.com/kunchenguid/treehouse) git worktree, so parallel work on one repo never collides.
-- **Two task shapes** - ship tasks deliver a change; scout tasks investigate, plan, reproduce, or audit and leave a confidence-tagged report.
+- **A visible crew** - every crewmate works in its own tmux window, experimental herdr/zellij tab, cmux workspace, or Orca terminal you can watch or type into; the first mate reconciles.
+- **Disposable worktrees** - each task runs in a clean [treehouse](https://github.com/kunchenguid/treehouse) git worktree, or an Orca-managed worktree when `backend=orca`, so parallel work on one repo never collides.
+- **Two task shapes** - ship tasks deliver a change; scout tasks investigate, plan, reproduce, or audit and leave a report.
 - **Explicit project modes** - each project ships via `no-mistakes`, `direct-PR`, or `local-only`, with an optional `+yolo` autonomy flag.
-- **Optional secondmates** - persistent domain supervisors that are still ordinary direct reports, but run from their own isolated firstmate homes.
-- **Event-driven, zero-token supervision** - a bash watcher sleeps on the fleet and wakes the first mate only when something is actionable; an idle crew costs nothing.
-- **Optional X mode** - opt in with one local `.env` token so firstmate can answer your public `@myfirstmate` mentions and act on them through the same lifecycle as chat requests, with a dry-run preview mode.
-- **Guarded by construction** - the first mate is read-only over your projects outside guarded clone refreshes, safe branch pruning, project-gate initialization, and approved `local-only` fast-forward merges; crewmates make every project change behind your merge approval; teardown refuses to discard unlanded work.
-- **Restart-proof** - all state lives on disk and in the session backend; kill the session anytime and the next one reconciles and carries on.
+- **Optional secondmates** - opt in to persistent domain supervisors that run from isolated firstmate homes with their own `FM_HOME`, state, projects, and session lock, kept on the primary firstmate version by guarded local fast-forwards.
+- **Event-driven, zero-token supervision** - a bash watcher sleeps on the fleet and wakes the first mate only when something needs you.
+- **Optional X mode** - opt in with one local `.env` token so firstmate can answer your public `@myfirstmate` mentions, act on normal reversible mention requests through the same lifecycle as chat requests, acknowledge spawned work, and post up to three public-safe completion follow-ups within seven days for genuine milestones and the final outcome without changing non-X behavior; dry-run preview records would-be replies and dismissals locally before go-live.
+- **Guarded by construction** - the first mate is read-only over your projects outside guarded clone refreshes, safe branch pruning, and approved `local-only` fast-forward merges; crewmates make every project change behind your merge approval.
+- **Restart-proof** - all state lives on disk and in the active session backend (tmux by hard default, herdr when selected or auto-detected, zellij/orca/cmux when explicitly selected); kill the session anytime and the next one reconciles and carries on.
 
-## How it works
+Full detail on every feature lives in [docs/architecture.md](docs/architecture.md).
+
+## Quick Start
+
+**Requirements:** a verified agent harness (claude, codex, opencode, pi, or grok), git with GitHub auth, and tmux for the reference session backend.
+The first mate detects and offers to install everything else.
+
+```sh
+gh auth login
+git clone https://github.com/kunchenguid/firstmate
+cd firstmate && claude   # launch your harness here; AGENTS.md takes over
+```
+
+Then just talk:
+
+```sh
+> ahoy! look at my github project xyz, then fix the flaky login test and add dark mode
+
+# firstmate checks its toolchain (asking your consent before installing anything),
+# clones the project under projects/, and spawns two crewmates in the active backend
+# fm-fix-login-k3 and fm-dark-mode-p7.
+# Minutes later:
+
+  PR ready for review, captain: https://github.com/you/xyz/pull/42
+  (fix flaky login test - risk: low - CI green)
+
+> alright merge it
+```
+
+Setup guides for tmux (the default) and every other supported backend (herdr, zellij, Orca, cmux) are linked in [Documentation](#documentation) below.
+
+## How It Works
 
 ```
             you (the captain)
@@ -86,26 +118,22 @@ Everything below this section is firstmate behavior as it runs in this fork; apa
     │ backend sends / status files │
     ▼              ▼               ▼
  ┌────────┐   ┌────────┐      ┌────────┐
- │fm-task1│   │fm-task2│  ... │fm-taskN│   tmux windows or herdr tabs you can watch
+ │fm-task1│   │fm-task2│  ... │fm-taskN│   tmux windows, herdr/zellij tabs, cmux workspaces, or Orca terminals
  │crewmate│   │crewmate│      │crewmate│   one autonomous agent each
  └───┬────┘   └───┬────┘      └───┬────┘
      ▼            ▼               ▼
-  treehouse worktree or isolated secondmate home
+  treehouse worktree, Orca worktree, or isolated secondmate home
      │
      ├─ ship: project mode ► PR/local merge ► teardown
      │
      └─ scout: report at data/<id>/report.md ► verify ► relay ► teardown
 ```
 
-### The lifecycle of a request
+You chat with the first mate.
+It routes each request to a crewmate in its own session endpoint and git worktree, supervises the fleet with a zero-token event-driven watcher, and brings you finished PRs, approved local merges, or investigation reports.
+Optional secondmates extend this to persistent domain supervisors, dispatch profiles let you steer which harness handles which task, and an opt-in X mode lets the same fleet answer public mentions.
 
-1. **Intake.** The first mate resolves which project you mean, resolves the task's scope (proceeding on a stated assumption rather than interrogating you), classifies the request as ship or scout, and judges dependencies coarsely: same repo plus overlapping area serializes, everything else runs in parallel, with no concurrency cap.
-2. **Brief.** `bin/fm-brief.sh` scaffolds a self-contained contract at `data/<id>/brief.md`: a sparse status protocol plus, for ship tasks, a worktree-isolation assertion, branch setup, and a definition of done shaped by the project's delivery mode; scout briefs swap in the report contract instead.
-3. **Spawn.** `bin/fm-spawn.sh` opens a session window named `fm-<id>`, checks out a clean treehouse worktree, and launches an autonomous agent with the brief.
-   Batch dispatch (`id1=repo1 id2=repo2 ...`) spawns several tasks in one call.
-4. **Supervise.** The zero-token bash watcher sleeps on the fleet, absorbs benign wakes in bash, and wakes the first mate only for actionable events: a status signal carrying a captain-relevant verb (`needs-decision`, `blocked`, `failed`, `done`, PR ready, checks green, merged), any per-task check firing (a merge poll, an X mention), a crewmate that stopped or stalled without reporting, or a heartbeat backstop catching a status the per-wake path missed.
-5. **Deliver.** Ship tasks land by the project's mode (below); scout tasks end in a report the first mate reads and verifies before relaying, with a blind-verifier scout for findings that would drive expensive-to-reverse decisions.
-6. **Teardown.** `bin/fm-teardown.sh` returns the worktree - and refuses if it holds uncommitted or unlanded work, so nothing is ever silently discarded.
+Full architecture - the supervision engine, worktree isolation, secondmates, dispatch profiles, project modes, optional X mode, fleet sync, and self-update - is in [docs/architecture.md](docs/architecture.md).
 
 ### Ship vs scout
 
@@ -248,10 +276,25 @@ Remove the token and the next session reverts to normal.
 - Teardown refuses worktrees holding uncommitted or unlanded work; `--force` exists only for an explicit captain-ordered discard.
 - Everything personal to your fleet (`.env`, `data/`, `state/`, `config/`, `projects/`, `.no-mistakes/`) is gitignored and never leaves your machine.
 
+### Two-tier skill layout
+
+Firstmate's skills live in two separate places with different audiences:
+
+- `.agents/skills/` - agent-loaded skills (this section's table, plus firstmate's agent-only reference skills). Every one of these assumes a live firstmate home and is meaningless, or actively misleading, installed anywhere else, so each carries `metadata.internal: true` in its frontmatter. That flag hides them from installer discovery (tools like the [skills.sh](https://skills.sh) `npx skills add` installer) without affecting how firstmate itself loads them - frontmatter metadata is inert to the agent's own skill loader.
+- `skills/` - public, installer-facing skills meant to be installed standalone into any project, independent of firstmate.
+  Each one is a self-contained skill with no dependency on firstmate's paths, tools, or vocabulary.
+  Today that is `skills/stow`, a generic session-knowledge-sweep skill that routes findings by explicit instruction first, then existing local conventions, then a private `.stow-notes.md` fallback in the current directory, and closes with a resume pointer for the next session.
+  It intentionally shares no code with the firstmate-internal `.agents/skills/stow` it is named after, so the two can evolve independently.
+
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) - the crew, supervision engine, worktrees, secondmates, and project modes in full detail.
-- [docs/configuration.md](docs/configuration.md) - environment variables, `FM_HOME`, config files, harness support, and X mode.
+- [docs/architecture.md](docs/architecture.md) - how the crew, supervision, worktrees, secondmates, and project modes work.
+- [docs/configuration.md](docs/configuration.md) - environment variables, `FM_HOME`, runtime backend selection, optional X mode, the files you set, and harness support.
+- [docs/tmux-backend.md](docs/tmux-backend.md) - setup guide for the tmux reference backend: prerequisites, attaching, and watching crew windows.
+- [docs/herdr-backend.md](docs/herdr-backend.md) - setup guide for the experimental herdr backend, plus its verification notes and known gaps.
+- [docs/zellij-backend.md](docs/zellij-backend.md) - setup guide for the experimental zellij backend, plus its verification notes and known gaps.
+- [docs/orca-backend.md](docs/orca-backend.md) - setup guide for the experimental Orca backend, plus its lifecycle notes and known gaps.
+- [docs/cmux-backend.md](docs/cmux-backend.md) - setup guide for the experimental cmux backend, plus its verification notes and known gaps.
 - [docs/scripts.md](docs/scripts.md) - the `bin/` toolbelt reference.
 - [docs/herdr-backend.md](docs/herdr-backend.md) - the experimental herdr session backend.
 - [`AGENTS.md`](AGENTS.md) - firstmate's full operating manual for the orchestrator agent.

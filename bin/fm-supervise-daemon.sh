@@ -420,9 +420,10 @@ task_window_backend() {  # <window> <state>
 }
 
 stale_window_is_busy() {  # <window> <state>
-  local win=$1 state=$2 backend tail40 bs
+  local win=$1 state=$2 backend label tail40 bs
   backend=$(task_window_backend "$win" "$state")
-  tail40=$(fm_backend_capture "$backend" "$win" 40 2>/dev/null) || return 2
+  label="fm-$(window_to_task "$win" "$state")"
+  tail40=$(fm_backend_capture "$backend" "$win" 40 "$label" 2>/dev/null) || return 2
   bs=$(fm_backend_busy_state "$backend" "$win" 2>/dev/null)
   case "$bs" in
     busy) return 0 ;;
@@ -543,7 +544,7 @@ housekeeping() {  # <state>
     key="${marker##*.subsuper-stale-}"
     age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))
     [ "$age" -ge "${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}" ] || continue
-    # Reconstruct the window target from metadata, with the live tmux list as the
+    # Reconstruct the backend target from metadata, with the live tmux list as the
     # legacy fallback for old markers that predate meta lookup.
     win=$(window_for_task "$key" "$state" 2>/dev/null || true)
     if [ -z "$win" ]; then
@@ -583,7 +584,7 @@ window_for_task() {  # <task-key> [state]
     [ -e "$meta" ] || continue
     task=$(basename "$meta"); task=${task%.meta}
     [ "$(_stale_key "$task")" = "$key" ] || continue
-    w=$(fm_meta_get "$meta" window)
+    w=$(fm_backend_target_of_meta "$meta")
     [ -n "$w" ] && { printf '%s' "$w"; return 0; }
   done
   for w in $(tmux list-windows -a -F '#{session_name}:#{window_name}' 2>/dev/null | grep ':fm-' || true); do
