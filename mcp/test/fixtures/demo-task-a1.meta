@@ -1,0 +1,7 @@
+window=fm:demo-task-a1
+worktree=/tmp/demo-worktree
+project=/tmp/demo-project
+harness=pi
+kind=ship
+mode=no-mistakes
+yolo=off

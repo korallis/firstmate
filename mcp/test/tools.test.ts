@@ -22,7 +22,7 @@ function fixturePaths(): FmPaths {
     fmRoot: FIXTURE_ROOT,
     fmHome: FIXTURE_ROOT,
     binDir: path.join(FIXTURE_ROOT, "bin"),
-    stateDir: path.join(FIXTURE_ROOT, "state"),
+    stateDir: FIXTURE_ROOT,
     dataDir: FIXTURE_ROOT,
     backlogPath: path.join(FIXTURE_ROOT, "backlog.md"),
   };
