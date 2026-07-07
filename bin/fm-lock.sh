@@ -17,26 +17,32 @@ mkdir -p "$STATE"
 # Known harness command names; extend when a new adapter is verified.
 HARNESS_RE='claude|codex|opencode|grok|^pi$'
 
-# Cursor lock recognition is narrower than fm-harness own detection: require an
-# agent-exec signal in the process args, or Cursor-named args only while the
-# current session carries documented Cursor agent env markers.
+# Cursor lock recognition requires a durable agent-exec argv signal.
+# Caller env markers may help discovery during acquire, but liveness uses the
+# same predicate so a persisted pid stays valid across sessions.
 cursor_lock_match() {
-  local args=$1
-  case "$args" in
+  case "$1" in
     *agent-exec*) return 0 ;;
   esac
-  if [ -n "${CURSOR_AGENT:-}" ] || [ "${CURSOR_EXTENSION_HOST_ROLE:-}" = "agent-exec" ]; then
-    case "$args" in
-      *[Cc]ursor*) return 0 ;;
-    esac
-  fi
   return 1
 }
 
-# holder_alive must not depend on caller env: only durable args signals count.
 cursor_holder_match() {
-  case "$1" in
-    *agent-exec*) return 0 ;;
+  cursor_lock_match "$1"
+}
+
+lock_wrapper_process() {
+  local comm=$1 args=$2
+  case "$(basename "$comm")" in
+    fm-lock.sh|fm-session-start.sh) return 0 ;;
+  esac
+  case "$args" in
+    */bin/fm-lock.sh|*/bin/fm-lock.sh\ *|bin/fm-lock.sh|bin/fm-lock.sh\ *)
+      return 0
+      ;;
+    */bin/fm-session-start.sh|*/bin/fm-session-start.sh\ *|bin/fm-session-start.sh|bin/fm-session-start.sh\ *)
+      return 0
+      ;;
   esac
   return 1
 }
@@ -46,13 +52,11 @@ harness_pid() {
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
     args=$(ps -o args= -p "$pid" 2>/dev/null)
-    case "$args" in
-      *fm-lock.sh*|*fm-session-start.sh*)
-        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-        [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
-        continue
-        ;;
-    esac
+    if lock_wrapper_process "$comm" "$args"; then
+      pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+      [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
+      continue
+    fi
     if printf '%s' "$(basename "$comm")" | grep -qE "$HARNESS_RE"; then
       echo "$pid"; return 0
     fi
