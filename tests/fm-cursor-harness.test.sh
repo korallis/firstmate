@@ -54,12 +54,33 @@ test_plugin_manifest_paths_exist() {
 }
 
 test_fm_lock_acquires_with_cursor_env() {
-  local home out
+  local home fakebin out holder_pid=424242
   home="$TMP_ROOT/lock-home-cursor"
+  fakebin=$(fm_fakebin "$TMP_ROOT/lock-cursor-acquire-fake")
   mkdir -p "$home/state"
-  out=$(FM_HOME="$home" CURSOR_AGENT=1 "$ROOT/bin/fm-lock.sh" 2>&1)
-  assert_contains "$out" "lock acquired: harness pid" "fm-lock did not acquire under CURSOR_AGENT"
-  pass "fm-lock acquires session lock when CURSOR_AGENT is set"
+  cat > "$fakebin/ps" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *"comm="*)
+    case "\$*" in
+      *"${holder_pid}"*) printf '%s\n' 'Cursor'; exit 0 ;;
+      *) printf '%s\n' 'bash'; exit 0 ;;
+    esac
+    ;;
+  *"args="*)
+    case "\$*" in
+      *"${holder_pid}"*) printf '%s\n' 'Cursor Helper (Plugin) agent-exec'; exit 0 ;;
+      *) printf '%s\n' 'bash fm-lock.sh'; exit 0 ;;
+    esac
+    ;;
+  *"ppid="*) printf '%s\n' '${holder_pid}'; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/ps"
+  out=$(FM_HOME="$home" CURSOR_AGENT=1 PATH="$fakebin:$PATH" "$ROOT/bin/fm-lock.sh" 2>&1)
+  assert_contains "$out" "lock acquired: harness pid ${holder_pid}" "fm-lock did not acquire via stable Cursor ancestor"
+  pass "fm-lock acquires session lock from a stable Cursor ancestor"
 }
 
 test_fm_lock_recognizes_cursor_holder() {

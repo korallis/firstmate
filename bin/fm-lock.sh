@@ -19,19 +19,20 @@ mkdir -p "$STATE"
 HARNESS_RE='claude|codex|[Cc]ursor|opencode|grok|^pi$'
 
 harness_pid() {
-  # Cursor native sessions expose documented env markers before ancestry matches.
-  # In-Cursor end-to-end verification is a firstmate follow-up; markers from docs.
-  if [ -n "${CURSOR_AGENT:-}" ] || [ "${CURSOR_EXTENSION_HOST_ROLE:-}" = "agent-exec" ]; then
-    echo $$; return 0
-  fi
   local pid=$$ comm args
-  for _ in 1 2 3 4 5 6 7 8; do
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
     args=$(ps -o args= -p "$pid" 2>/dev/null)
+    case "$args" in
+      *fm-lock.sh*|*fm-session-start.sh*)
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
+        continue
+        ;;
+    esac
     if printf '%s' "$(basename "$comm")" | grep -qE "$HARNESS_RE"; then
       echo "$pid"; return 0
     fi
-    # Bare interpreter (e.g. node): match the harness name in its script path.
     case "$comm" in
       *node*|*python*) printf '%s' "$args" | grep -qE "$HARNESS_RE" && { echo "$pid"; return 0; } ;;
     esac
