@@ -23,8 +23,8 @@ function fixturePaths(): FmPaths {
     fmHome: FIXTURE_ROOT,
     binDir: path.join(FIXTURE_ROOT, "bin"),
     stateDir: path.join(FIXTURE_ROOT, "state"),
-    dataDir: path.join(FIXTURE_ROOT, "data"),
-    backlogPath: path.join(FIXTURE_ROOT, "data", "backlog.md"),
+    dataDir: FIXTURE_ROOT,
+    backlogPath: path.join(FIXTURE_ROOT, "backlog.md"),
   };
 }
 
