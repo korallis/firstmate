@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "firstmate": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/mcp/dist/src/index.js"],
+      "env": {
+        "FM_HOME": "${env:FM_HOME}"
+      },
+      "envFile": "${workspaceFolder}/.env"
+    }
+  }
+}
