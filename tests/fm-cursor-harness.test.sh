@@ -53,9 +53,40 @@ test_plugin_manifest_paths_exist() {
   pass "plugin.json component paths exist on disk"
 }
 
+test_fm_lock_acquires_with_cursor_env() {
+  local home out
+  home="$TMP_ROOT/lock-home-cursor"
+  mkdir -p "$home/state"
+  out=$(FM_HOME="$home" CURSOR_AGENT=1 "$ROOT/bin/fm-lock.sh" 2>&1)
+  assert_contains "$out" "lock acquired: harness pid" "fm-lock did not acquire under CURSOR_AGENT"
+  pass "fm-lock acquires session lock when CURSOR_AGENT is set"
+}
+
+test_fm_lock_recognizes_cursor_holder() {
+  local home fakebin out
+  home="$TMP_ROOT/lock-home-cursor-holder"
+  fakebin=$(fm_fakebin "$TMP_ROOT/lock-cursor-fake")
+  mkdir -p "$home/state"
+  printf '%s\n' "$$" > "$home/state/.lock"
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *"comm="*) printf '%s\n' 'Cursor'; exit 0 ;;
+  *"args="*) printf '%s\n' 'Cursor Helper (Plugin) agent-exec'; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/ps"
+  out=$(FM_HOME="$home" PATH="$fakebin:$PATH" "$ROOT/bin/fm-lock.sh" status)
+  assert_contains "$out" "lock: held by live harness pid" "fm-lock did not recognize cursor as a live holder"
+  pass "fm-lock recognizes cursor harness processes"
+}
+
 test_cursor_agent_marker
 test_cursor_extension_host_role_marker
 test_cursor_wins_over_claude_marker
 test_cursor_not_dispatchable_for_crew
 test_cursor_not_dispatchable_for_secondmate
 test_plugin_manifest_paths_exist
+test_fm_lock_acquires_with_cursor_env
+test_fm_lock_recognizes_cursor_holder

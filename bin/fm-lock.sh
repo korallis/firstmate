@@ -15,9 +15,15 @@ LOCK="$STATE/.lock"
 mkdir -p "$STATE"
 
 # Known harness command names; extend when a new adapter is verified.
-HARNESS_RE='claude|codex|opencode|grok|^pi$'
+# cursor: env markers are checked first in harness_pid; name match is a fallback.
+HARNESS_RE='claude|codex|[Cc]ursor|opencode|grok|^pi$'
 
 harness_pid() {
+  # Cursor native sessions expose documented env markers before ancestry matches.
+  # In-Cursor end-to-end verification is a firstmate follow-up; markers from docs.
+  if [ -n "${CURSOR_AGENT:-}" ] || [ "${CURSOR_EXTENSION_HOST_ROLE:-}" = "agent-exec" ]; then
+    echo $$; return 0
+  fi
   local pid=$$ comm args
   for _ in 1 2 3 4 5 6 7 8; do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
