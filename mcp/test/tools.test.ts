@@ -94,6 +94,17 @@ describe("read tools", () => {
     assert.match(text, /state: working/);
     assert.deepEqual(calls, [["demo-task-a1"]]);
   });
+
+  it("crew_state rejects unknown task ids", async () => {
+    await assert.rejects(
+      () =>
+        crewState(
+          mockDeps(async () => ({ stdout: "", stderr: "", exitCode: 0 })),
+          "unknown-task",
+        ),
+      /task_id not in fleet/,
+    );
+  });
 });
 
 describe("steer_task", () => {
@@ -107,8 +118,42 @@ describe("steer_task", () => {
       return { stdout: "ok\n", stderr: "", exitCode: 0 };
     };
     const deps = mockDeps(runScript);
-    await steerTask(deps, "fm-demo-task-a1", "continue");
+    await steerTask(deps, "demo-task-a1", "continue");
     assert.deepEqual(invoked, ["fm-send.sh"]);
+  });
+
+  it("rejects escape-hatch session targets", async () => {
+    const deps = mockDeps(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+    await assert.rejects(
+      () => steerTask(deps, "session:0:1.2", "hello"),
+      /target not in fleet/,
+    );
+  });
+
+  it("rejects unknown bare targets", async () => {
+    const deps = mockDeps(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+    await assert.rejects(
+      () => peekTask(deps, "random-pane"),
+      /target not in fleet/,
+    );
+  });
+
+  it("accepts meta window values", async () => {
+    const calls: string[][] = [];
+    const deps = mockDeps(async (_script, args) => {
+      calls.push(args);
+      return { stdout: "ok\n", stderr: "", exitCode: 0 };
+    });
+    await peekTask(deps, "fm:demo-task-a1");
+    assert.deepEqual(calls, [["fm:demo-task-a1"]]);
+  });
+
+  it("rejects multiline steer lines", async () => {
+    const deps = mockDeps(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+    await assert.rejects(
+      () => steerTask(deps, "demo-task-a1", "line one\nline two"),
+      /single line without newlines/,
+    );
   });
 });
 

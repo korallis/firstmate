@@ -1,5 +1,11 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import {
+  assertFleetScopedTarget,
+  assertFleetTaskId,
+  assertSteerLine,
+  loadFleetTargetIndex,
+} from "./fleet-targets.js";
 import type { FmPaths } from "./paths.js";
 import { listMetaFiles, parseMetaFile, readTextFile } from "./paths.js";
 
@@ -112,6 +118,8 @@ export async function peekTask(
   target: string,
   lines?: number,
 ): Promise<string> {
+  const index = await loadFleetTargetIndex(deps);
+  assertFleetScopedTarget(index, target);
   const args = lines !== undefined ? [target, String(lines)] : [target];
   const result = await deps.runScript("fm-peek.sh", args);
   const body = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
@@ -122,6 +130,8 @@ export async function peekTask(
 }
 
 export async function crewState(deps: FleetDeps, taskId: string): Promise<string> {
+  const index = await loadFleetTargetIndex(deps);
+  assertFleetTaskId(index, taskId);
   const result = await deps.runScript("fm-crew-state.sh", [taskId]);
   const body = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   if (result.exitCode !== 0) {
@@ -135,6 +145,9 @@ export async function steerTask(
   target: string,
   line: string,
 ): Promise<string> {
+  const index = await loadFleetTargetIndex(deps);
+  assertFleetScopedTarget(index, target);
+  assertSteerLine(line);
   const result = await deps.runScript("fm-send.sh", [target, line]);
   const body = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   if (result.exitCode !== 0) {

@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prestart": "npm run build",
     "start": "node dist/src/index.js",
     "test": "npm run build && node --test dist/test/tools.test.js",
     "smoke": "npm run build && node dist/scripts/smoke.js"

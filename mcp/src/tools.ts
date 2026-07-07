@@ -54,12 +54,12 @@ export function registerFirstmateTools(
     {
       title: "Peek task pane",
       description:
-        "Wrap bin/fm-peek.sh for a task id or backend window target. Read-only.",
+        "Wrap bin/fm-peek.sh for a fleet-scoped target (task id or window from state/*.meta). Read-only.",
       inputSchema: {
         target: z
           .string()
           .min(1)
-          .describe("Task id (e.g. fix-login-k3) or fm-<id> window target"),
+          .describe("Task id from state/*.meta or its recorded window= value"),
         lines: z
           .number()
           .int()
@@ -87,7 +87,10 @@ export function registerFirstmateTools(
       description:
         "Wrap bin/fm-crew-state.sh for a task id. Read-only one-line reconciled state.",
       inputSchema: {
-        task_id: z.string().min(1).describe("Firstmate task id"),
+        task_id: z
+          .string()
+          .min(1)
+          .describe("Firstmate task id from state/*.meta"),
       },
       annotations: READ_ONLY_ANNOTATION,
     },
@@ -124,16 +127,17 @@ export function registerFirstmateTools(
     {
       title: "Steer task (write)",
       description:
-        "ONLY mutating tool: wrap bin/fm-send.sh with a single short line to a task window. Use sparingly.",
+        "ONLY mutating tool: wrap bin/fm-send.sh with a single short line to a fleet-scoped target. Use sparingly.",
       inputSchema: {
         target: z
           .string()
           .min(1)
-          .describe("Task id or fm-<id> / backend window target"),
+          .describe("Task id from state/*.meta or its recorded window= value"),
         line: z
           .string()
           .min(1)
-          .describe("One-line steer text (keep it short)"),
+          .max(500)
+          .describe("One-line steer text (no newlines, max 500 chars)"),
       },
       annotations: WRITE_ANNOTATION,
     },
