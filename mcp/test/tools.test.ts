@@ -75,7 +75,7 @@ describe("read tools", () => {
       12,
     );
     assert.equal(text, "pane tail");
-    assert.deepEqual(calls, [["demo-task-a1", "12"]]);
+    assert.deepEqual(calls, [["fm-demo-task-a1", "12"]]);
   });
 
   it("crew_state wraps fm-crew-state.sh", async () => {
@@ -110,16 +110,19 @@ describe("read tools", () => {
 describe("steer_task", () => {
   it("is the only script path that invokes fm-send.sh", async () => {
     const invoked: string[] = [];
+    const calls: string[][] = [];
     const runScript = async (
       scriptName: string,
-      _args: string[],
+      args: string[],
     ): Promise<ScriptResult> => {
       invoked.push(scriptName);
+      calls.push(args);
       return { stdout: "ok\n", stderr: "", exitCode: 0 };
     };
     const deps = mockDeps(runScript);
     await steerTask(deps, "demo-task-a1", "continue");
     assert.deepEqual(invoked, ["fm-send.sh"]);
+    assert.deepEqual(calls, [["fm-demo-task-a1", "continue"]]);
   });
 
   it("rejects escape-hatch session targets", async () => {

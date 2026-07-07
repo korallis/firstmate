@@ -19,7 +19,6 @@ export async function loadFleetTargetIndex(
   for (const file of metaFiles) {
     const id = metaTaskId(file);
     taskIds.add(id);
-    allowedTargets.add(id);
     allowedTargets.add(`fm-${id}`);
 
     const content = await deps.readText(
@@ -37,10 +36,13 @@ export async function loadFleetTargetIndex(
   return { taskIds, allowedTargets };
 }
 
-export function assertFleetScopedTarget(
+export function normalizeFleetScopedTarget(
   index: FleetTargetIndex,
   target: string,
-): void {
+): string {
+  if (index.taskIds.has(target)) {
+    return `fm-${target}`;
+  }
   if (target.includes(":") && !index.allowedTargets.has(target)) {
     throw new Error(
       "target not in fleet: backend escape-hatch selectors (session:...) are blocked; use a task id or window from state/*.meta",
@@ -51,6 +53,7 @@ export function assertFleetScopedTarget(
       "target not in fleet: must be a task id or window value from state/*.meta",
     );
   }
+  return target;
 }
 
 export function assertFleetTaskId(

@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import {
-  assertFleetScopedTarget,
   assertFleetTaskId,
   assertSteerLine,
   loadFleetTargetIndex,
+  normalizeFleetScopedTarget,
 } from "./fleet-targets.js";
 import type { FmPaths } from "./paths.js";
 import { listMetaFiles, parseMetaFile, readTextFile } from "./paths.js";
@@ -119,8 +119,10 @@ export async function peekTask(
   lines?: number,
 ): Promise<string> {
   const index = await loadFleetTargetIndex(deps);
-  assertFleetScopedTarget(index, target);
-  const args = lines !== undefined ? [target, String(lines)] : [target];
+  const scriptTarget = normalizeFleetScopedTarget(index, target);
+  const args = lines !== undefined
+    ? [scriptTarget, String(lines)]
+    : [scriptTarget];
   const result = await deps.runScript("fm-peek.sh", args);
   const body = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   if (result.exitCode !== 0) {
@@ -146,14 +148,14 @@ export async function steerTask(
   line: string,
 ): Promise<string> {
   const index = await loadFleetTargetIndex(deps);
-  assertFleetScopedTarget(index, target);
+  const scriptTarget = normalizeFleetScopedTarget(index, target);
   assertSteerLine(line);
-  const result = await deps.runScript("fm-send.sh", [target, line]);
+  const result = await deps.runScript("fm-send.sh", [scriptTarget, line]);
   const body = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   if (result.exitCode !== 0) {
     throw new Error(body || `fm-send.sh exited ${result.exitCode}`);
   }
-  return body || `steered ${target}`;
+  return body || `steered ${scriptTarget}`;
 }
 
 export function toolText(content: string): { content: Array<{ type: "text"; text: string }> } {
