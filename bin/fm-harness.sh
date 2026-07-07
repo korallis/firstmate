@@ -71,12 +71,27 @@ detect_own() {
   echo unknown
 }
 
+# cursor is detected for firstmate's own harness only.
+# It must not resolve as a crew/secondmate adapter until fm-spawn, fm-lock, and
+# dispatch validation are verified end-to-end in Cursor (Track T1 follow-up).
+filter_dispatchable() {
+  case "$1" in
+    cursor) echo unknown ;;
+    *) echo "$1" ;;
+  esac
+}
+
 # Resolve the effective crewmate harness: config/crew-harness (a bare adapter
 # name) wins; absent or "default" mirrors firstmate's own harness.
 resolve_crew() {
-  local crew=
+  local crew='' own=
   [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
-  if [ -z "$crew" ] || [ "$crew" = "default" ]; then detect_own; else echo "$crew"; fi
+  if [ -z "$crew" ] || [ "$crew" = "default" ]; then
+    own=$(detect_own)
+    filter_dispatchable "$own"
+  else
+    filter_dispatchable "$crew"
+  fi
 }
 
 # Print the first non-empty, non-comment line of config/secondmate-harness
@@ -121,7 +136,7 @@ secondmate_field() {
 resolve_secondmate() {
   local sm
   sm=$(secondmate_field 1)
-  if [ -z "$sm" ] || [ "$sm" = "default" ]; then resolve_crew; else echo "$sm"; fi
+  if [ -z "$sm" ] || [ "$sm" = "default" ]; then resolve_crew; else filter_dispatchable "$sm"; fi
 }
 
 # Print the optional model token (2nd field) from config/secondmate-harness, or

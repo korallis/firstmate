@@ -27,6 +27,20 @@ test_cursor_wins_over_claude_marker() {
   pass "cursor marker wins over CLAUDECODE when both are set"
 }
 
+test_cursor_not_dispatchable_for_crew() {
+  local got
+  got=$(CURSOR_AGENT=1 "$HARNESS" crew)
+  [ "$got" = unknown ] || fail "crew must not resolve cursor until verified, got '$got'"
+  pass "cursor is excluded from crew harness resolution"
+}
+
+test_cursor_not_dispatchable_for_secondmate() {
+  local got
+  got=$(CURSOR_AGENT=1 "$HARNESS" secondmate)
+  [ "$got" = unknown ] || fail "secondmate must not resolve cursor until verified, got '$got'"
+  pass "cursor is excluded from secondmate harness resolution"
+}
+
 test_plugin_manifest_paths_exist() {
   local manifest skills hooks
   manifest="$ROOT/.cursor-plugin/plugin.json"
@@ -41,4 +55,6 @@ test_plugin_manifest_paths_exist() {
 test_cursor_agent_marker
 test_cursor_extension_host_role_marker
 test_cursor_wins_over_claude_marker
+test_cursor_not_dispatchable_for_crew
+test_cursor_not_dispatchable_for_secondmate
 test_plugin_manifest_paths_exist
