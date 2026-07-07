@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Detect the agent harness this process tree runs on.
-# Usage: fm-harness.sh                  print own harness: claude|codex|opencode|pi|grok|unknown
+# Usage: fm-harness.sh                  print own harness: claude|codex|cursor|opencode|pi|grok|unknown
 #        fm-harness.sh crew             print the effective CREWMATE harness
 #                                        (config/crew-harness; "default" resolves to own)
 #        fm-harness.sh secondmate       print the harness the PRIMARY uses to launch
@@ -29,6 +29,13 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 detect_own() {
   # Layer 1: environment markers for verified harnesses.
+  # cursor: CURSOR_AGENT is documented for agent terminal sessions
+  # (cursor.com/docs/agent/tools/terminal). CURSOR_EXTENSION_HOST_ROLE=agent-exec
+  # is used by agent-exec shells when CURSOR_AGENT is absent (vercel/detect-agent).
+  # In-Cursor end-to-end verification is a firstmate follow-up; this pane cannot
+  # empirically confirm which marker Cursor's native agents panel sets.
+  [ -n "${CURSOR_AGENT:-}" ] && { echo cursor; return; }
+  [ "${CURSOR_EXTENSION_HOST_ROLE:-}" = "agent-exec" ] && { echo cursor; return; }
   [ "${CLAUDECODE:-}" = "1" ] && { echo claude; return; }
   [ "${PI_CODING_AGENT:-}" = "true" ] && { echo pi; return; }
   # grok sets GROK_AGENT=1 for its child/tool processes (verified, grok 0.2.73).
