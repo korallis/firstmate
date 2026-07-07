@@ -1,7 +1,7 @@
 {
   "name": "firstmate",
   "version": "0.1.0",
-  "description": "Talk to one agent. Ship with a crew. Installs firstmate's agent instructions, internal skills, and turn-end hooks for Cursor's agents panel.",
+  "description": "Talk to one agent. Ship with a crew. Installs firstmate's internal skills for Cursor's agents panel.",
   "author": {
     "name": "Kun Chen"
   },
@@ -12,9 +12,7 @@
     "firstmate",
     "orchestration",
     "agents",
-    "skills",
-    "hooks"
+    "skills"
   ],
-  "skills": ".agents/skills",
-  "hooks": ".claude/settings.json"
+  "skills": ".agents/skills"
 }

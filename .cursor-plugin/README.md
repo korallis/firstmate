@@ -5,10 +5,10 @@ Installing this plugin from Cursor's Customize page wires firstmate's existing a
 ## What you get
 
 - **Skills** from `.agents/skills` (afk, bearings, harness adapters, secondmate provisioning, and the rest of firstmate's internal skill library).
-- **Hooks** from `.claude/settings.json` (the primary turn-end guard that keeps supervision live while crew work is in flight).
 
 The plugin manifest only references paths that already live in the firstmate repo.
 It does not duplicate skill or rule content.
+Cursor-format hooks are deferred to a later track; Claude Code hooks remain in `.claude/settings.json` for non-plugin installs.
 
 ## Running firstmate in Cursor
 
