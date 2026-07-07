@@ -36,7 +36,7 @@ export function registerFirstmateTools(
       title: "Fleet status",
       description:
         "Summarize in-flight tasks from state/*.meta and the full data/backlog.md. Read-only.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: READ_ONLY_ANNOTATION,
     },
     async () => {
@@ -55,7 +55,7 @@ export function registerFirstmateTools(
       title: "Peek task pane",
       description:
         "Wrap bin/fm-peek.sh for a fleet-scoped target (task id or window from state/*.meta). Read-only.",
-      inputSchema: {
+      inputSchema: z.object({
         target: z
           .string()
           .min(1)
@@ -67,7 +67,7 @@ export function registerFirstmateTools(
           .max(200)
           .optional()
           .describe("Tail lines to capture (default 40)"),
-      },
+      }),
       annotations: READ_ONLY_ANNOTATION,
     },
     async ({ target, lines }) => {
@@ -86,12 +86,12 @@ export function registerFirstmateTools(
       title: "Crew current state",
       description:
         "Wrap bin/fm-crew-state.sh for a task id. Read-only one-line reconciled state.",
-      inputSchema: {
+      inputSchema: z.object({
         task_id: z
           .string()
           .min(1)
           .describe("Firstmate task id from state/*.meta"),
-      },
+      }),
       annotations: READ_ONLY_ANNOTATION,
     },
     async ({ task_id }) => {
@@ -109,7 +109,7 @@ export function registerFirstmateTools(
     {
       title: "Backlog",
       description: "Read data/backlog.md verbatim. Read-only.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: READ_ONLY_ANNOTATION,
     },
     async () => {
@@ -128,7 +128,7 @@ export function registerFirstmateTools(
       title: "Steer task (write)",
       description:
         "ONLY mutating tool: wrap bin/fm-send.sh with a single short line to a fleet-scoped target. Use sparingly.",
-      inputSchema: {
+      inputSchema: z.object({
         target: z
           .string()
           .min(1)
@@ -138,7 +138,7 @@ export function registerFirstmateTools(
           .min(1)
           .max(500)
           .describe("One-line steer text (no newlines, max 500 chars)"),
-      },
+      }),
       annotations: WRITE_ANNOTATION,
     },
     async ({ target, line }) => {

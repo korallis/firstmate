@@ -1,23 +1,27 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const MCP_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
-const SERVER_ENTRY = path.join(MCP_ROOT, "dist", "src", "index.js");
+const WORKSPACE_FOLDER = path.dirname(MCP_ROOT);
+const MANIFEST_PATH = path.join(MCP_ROOT, "mcp.json");
+
+type ManifestServer = {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+};
 
 async function main(): Promise<void> {
-  const fmHome = process.env.FM_HOME?.trim();
-  const env: Record<string, string> = {};
-  if (fmHome) {
-    env.FM_HOME = fmHome;
-  }
+  const server = await readManifestServer();
 
   const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [SERVER_ENTRY],
-    env,
+    command: server.command,
+    args: server.args,
+    env: server.env,
   });
   const client = new Client({ name: "firstmate-mcp-smoke", version: "0.1.0" });
   await client.connect(transport);
@@ -51,6 +55,71 @@ async function main(): Promise<void> {
 
   await client.close();
   console.log(`smoke ok: ${names.join(", ")}`);
+}
+
+async function readManifestServer(): Promise<ManifestServer> {
+  const parsed = JSON.parse(await readFile(MANIFEST_PATH, "utf8")) as unknown;
+  const manifest = requireRecord(parsed, "mcp.json");
+  const mcpServers = requireRecord(manifest.mcpServers, "mcpServers");
+  const firstmate = requireRecord(mcpServers.firstmate, "mcpServers.firstmate");
+  const command = interpolateManifestValue(
+    requireString(firstmate.command, "mcpServers.firstmate.command"),
+  );
+  const args = requireStringArray(
+    firstmate.args,
+    "mcpServers.firstmate.args",
+  ).map(interpolateManifestValue);
+  const env = readManifestEnv(firstmate.env);
+
+  return { command, args, env };
+}
+
+function readManifestEnv(value: unknown): Record<string, string> {
+  if (value === undefined) {
+    return {};
+  }
+
+  const record = requireRecord(value, "mcpServers.firstmate.env");
+  const env: Record<string, string> = {};
+  for (const [key, rawValue] of Object.entries(record)) {
+    const template = requireString(rawValue, `mcpServers.firstmate.env.${key}`);
+    const resolved = interpolateManifestValue(template);
+    if (resolved) {
+      env[key] = resolved;
+    }
+  }
+  return env;
+}
+
+function interpolateManifestValue(value: string): string {
+  return value.replace(/\$\{workspaceFolder\}/g, WORKSPACE_FOLDER).replace(
+    /\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g,
+    (_match, name: string): string => process.env[name]?.trim() ?? "",
+  );
+}
+
+function requireRecord(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length < 1) {
+    throw new Error(`${label} must be a nonempty string`);
+  }
+  return value;
+}
+
+function requireStringArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new Error(`${label} must be a string array`);
+  }
+  return value;
 }
 
 function extractText(result: { content?: unknown }): string {

@@ -3,7 +3,7 @@
     "firstmate": {
       "type": "stdio",
       "command": "npm",
-      "args": ["run", "start", "--prefix", "${workspaceFolder}/mcp"],
+      "args": ["--silent", "--prefix", "${workspaceFolder}/mcp", "run", "start"],
       "env": {
         "FM_HOME": "${env:FM_HOME}"
       },
