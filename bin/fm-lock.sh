@@ -33,6 +33,14 @@ cursor_lock_match() {
   return 1
 }
 
+# holder_alive must not depend on caller env: only durable args signals count.
+cursor_holder_match() {
+  case "$1" in
+    *agent-exec*) return 0 ;;
+  esac
+  return 1
+}
+
 harness_pid() {
   local pid=$$ comm args
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -68,7 +76,7 @@ holder_alive() {  # true if $1 is a live process that looks like a harness
   if printf '%s' "$(basename "$comm") $(ps -o args= -p "$pid" 2>/dev/null)" | grep -qE "$HARNESS_RE"; then
     return 0
   fi
-  cursor_lock_match "$args"
+  cursor_holder_match "$args"
 }
 
 if [ "${1:-}" = "status" ]; then
