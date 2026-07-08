@@ -31,6 +31,8 @@ The `ci` command installs exactly from the checked-in `mcp/package-lock.json`.
 The MCP server always runs firstmate wrapper scripts from the checkout that contains `mcp/`.
 By default it reads the repo root's `data/` and `state/` directories, matching a normal firstmate home.
 Set `FM_HOME` in the MCP client environment when the panel should inspect a different firstmate home, such as a secondmate home.
+When `FM_HOME` is unset, `FM_ROOT_OVERRIDE` remains supported as the legacy whole-home fallback.
+That fallback changes the operational home only; the server still runs the `mcp/` package and `bin/` scripts from the checkout opened in Cursor.
 `FM_STATE_OVERRIDE` can point at an alternate state directory for tests and smoke checks.
 The manifest passes through `${env:FM_HOME}` and names `${workspaceFolder}/.env` as an optional env file for clients that support `envFile`.
 
