@@ -19,10 +19,11 @@ Open this repository as the Cursor workspace so `${workspaceFolder}` resolves to
 Install the package dependencies once before first use:
 
 ```sh
-npm --prefix mcp install
+npm --prefix mcp ci
 ```
 
 The server requires Node 20 or newer.
+The `ci` command installs exactly from the checked-in `mcp/package-lock.json`.
 `npm run start` builds the TypeScript package before launching `dist/src/index.js`, so Cursor can start it directly through the manifest after dependencies are installed.
 
 ## Operational Home
@@ -54,6 +55,7 @@ A raw task id from `state/<id>.meta` is normalized to `fm-<id>`.
 The explicit `fm-<id>` alias is accepted too.
 Recorded endpoint values such as `window=` and Orca `terminal=` are accepted when they appear in that task's meta file.
 Ad hoc backend selectors such as `session:...` are rejected unless they exactly match a recorded fleet endpoint.
+If the same endpoint value appears in more than one `state/*.meta` file, the server rejects it as ambiguous and requires the task id.
 
 `crew_state` is narrower by design and accepts only the task id from `state/<id>.meta`.
 `steer_task.line` must be one line, must contain no newline characters, and is capped at 500 characters.

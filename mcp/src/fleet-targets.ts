@@ -86,12 +86,12 @@ export function normalizeFleetScopedTarget(
   }
   if (target.includes(":") && !index.allowedTargets.has(target)) {
     throw new Error(
-      "target not in fleet: backend escape-hatch selectors (session:...) are blocked; use a task id or window from state/*.meta",
+      "target not in fleet: backend escape-hatch selectors (session:...) are blocked; use a task id or recorded endpoint from state/*.meta",
     );
   }
   if (!index.allowedTargets.has(target)) {
     throw new Error(
-      "target not in fleet: must be a task id or window value from state/*.meta",
+      "target not in fleet: must be a task id or recorded endpoint value from state/*.meta",
     );
   }
   return target;
@@ -116,7 +116,7 @@ export function canonicalizeFleetScopedTarget(
       );
     }
     throw new Error(
-      "target not in fleet: must be a task id or window value from state/*.meta",
+      "target not in fleet: must be a task id or recorded endpoint value from state/*.meta",
     );
   }
   return canonicalTarget;

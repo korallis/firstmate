@@ -54,12 +54,14 @@ export function registerFirstmateTools(
     {
       title: "Peek task pane",
       description:
-        "Wrap bin/fm-peek.sh for a fleet-scoped target (task id or window from state/*.meta). Read-only.",
+        "Wrap bin/fm-peek.sh for a fleet-scoped target (task id or recorded window=/terminal= endpoint from state/*.meta). Read-only.",
       inputSchema: z.object({
         target: z
           .string()
           .min(1)
-          .describe("Task id from state/*.meta or its recorded window= value"),
+          .describe(
+            "Task id from state/*.meta or its recorded window=/terminal= endpoint value",
+          ),
         lines: z
           .number()
           .int()
@@ -132,7 +134,9 @@ export function registerFirstmateTools(
         target: z
           .string()
           .min(1)
-          .describe("Task id from state/*.meta or its recorded window= value"),
+          .describe(
+            "Task id from state/*.meta or its recorded window=/terminal= endpoint value",
+          ),
         line: z
           .string()
           .min(1)
