@@ -151,6 +151,16 @@ describe("steer_task", () => {
     assert.deepEqual(calls, [["fm:demo-task-a1"]]);
   });
 
+  it("canonicalizes recorded endpoint values before steering", async () => {
+    const calls: string[][] = [];
+    const deps = mockDeps(async (_script, args) => {
+      calls.push(args);
+      return { stdout: "ok\n", stderr: "", exitCode: 0 };
+    });
+    await steerTask(deps, "session:secondmate:1", "continue");
+    assert.deepEqual(calls, [["fm-demo-secondmate-c3", "continue"]]);
+  });
+
   it("rejects multiline steer lines", async () => {
     const deps = mockDeps(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
     await assert.rejects(

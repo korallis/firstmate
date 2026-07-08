@@ -18,7 +18,9 @@ The file format is unchanged in both modes; tasks-axi and manual edits produce t
 
 ## Cursor MCP manifest (mcp/mcp.json)
 
-The tracked [`mcp/mcp.json`](../mcp/mcp.json) manifest registers the optional `firstmate` MCP server for Cursor's native chat and agents panel.
+The tracked [`mcp/mcp.json`](../mcp/mcp.json) manifest is the standalone package manifest for the optional `firstmate` MCP server.
+Cursor does not auto-discover it from that path.
+Copy or import it into Cursor's MCP settings as described in [`docs/cursor-mcp.md`](cursor-mcp.md).
 It runs `npm --silent --prefix ${workspaceFolder}/mcp run start` as a stdio server and passes `${env:FM_HOME}` through to the server process.
 When `FM_HOME` is unset, the server reads the checkout root as the operational home.
 Set `FM_HOME` when Cursor should inspect a different firstmate home, such as a secondmate home.

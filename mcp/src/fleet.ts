@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   assertFleetTaskId,
   assertSteerLine,
+  canonicalizeFleetScopedTarget,
   loadFleetTargetIndex,
   normalizeFleetScopedTarget,
 } from "./fleet-targets.js";
@@ -148,7 +149,7 @@ export async function steerTask(
   line: string,
 ): Promise<string> {
   const index = await loadFleetTargetIndex(deps);
-  const scriptTarget = normalizeFleetScopedTarget(index, target);
+  const scriptTarget = canonicalizeFleetScopedTarget(index, target);
   assertSteerLine(line);
   const result = await deps.runScript("fm-send.sh", [scriptTarget, line]);
   const body = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();

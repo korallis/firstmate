@@ -8,7 +8,12 @@ Use it as an operator surface for a firstmate home that already exists on disk.
 ## Setup
 
 The checked-in manifest is [`mcp/mcp.json`](../mcp/mcp.json).
-It registers one MCP server named `firstmate` and runs `npm --silent --prefix ${workspaceFolder}/mcp run start`.
+Cursor does not auto-discover that standalone file from this repository path.
+Keep it there for package-level reference and for the local smoke test.
+To use it in Cursor, copy or import the JSON into Cursor's MCP settings.
+For Cursor project-level discovery, use a local `.cursor/mcp.json` copy of that JSON in the workspace.
+Do not commit `.cursor/mcp.json` unless this repository intentionally starts tracking Cursor project config.
+The manifest registers one MCP server named `firstmate` and runs `npm --silent --prefix ${workspaceFolder}/mcp run start`.
 Open this repository as the Cursor workspace so `${workspaceFolder}` resolves to the firstmate checkout that contains `mcp/`.
 
 Install the package dependencies once before first use:
@@ -67,5 +72,6 @@ Run the local MCP handshake smoke against the current `FM_HOME`:
 npm --prefix mcp run smoke
 ```
 
-The smoke client reads `mcp/mcp.json`, starts the stdio server, lists all five tools, and calls `fleet_status` plus `backlog`.
+The smoke client reads the standalone `mcp/mcp.json` directly, starts the stdio server, lists all five tools, and calls `fleet_status` plus `backlog`.
+It verifies the package manifest and server handshake, not Cursor project auto-discovery.
 The repository behavior suite also includes [`tests/fm-mcp.test.sh`](../tests/fm-mcp.test.sh), which installs package dependencies, runs the package tests, and runs the smoke handshake.

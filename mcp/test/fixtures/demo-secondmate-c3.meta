@@ -1,0 +1,7 @@
+window=session:secondmate:1
+worktree=/tmp/demo-secondmate-worktree
+project=/tmp/demo-secondmate-project
+harness=codex
+kind=secondmate
+mode=no-mistakes
+yolo=off

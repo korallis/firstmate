@@ -5,6 +5,8 @@ import { metaTaskId, parseMetaFile } from "./paths.js";
 export interface FleetTargetIndex {
   taskIds: Set<string>;
   allowedTargets: Set<string>;
+  canonicalTargets: Map<string, string>;
+  ambiguousTargets: Set<string>;
 }
 
 export const MAX_STEER_LINE_LENGTH = 500;
@@ -14,12 +16,22 @@ export async function loadFleetTargetIndex(
 ): Promise<FleetTargetIndex> {
   const taskIds = new Set<string>();
   const allowedTargets = new Set<string>();
+  const canonicalTargets = new Map<string, string>();
+  const ambiguousTargets = new Set<string>();
   const metaFiles = await deps.listMeta(deps.paths.stateDir);
 
   for (const file of metaFiles) {
     const id = metaTaskId(file);
+    const canonicalTarget = `fm-${id}`;
     taskIds.add(id);
-    allowedTargets.add(`fm-${id}`);
+    allowedTargets.add(canonicalTarget);
+    addCanonicalTarget(canonicalTargets, ambiguousTargets, id, canonicalTarget);
+    addCanonicalTarget(
+      canonicalTargets,
+      ambiguousTargets,
+      canonicalTarget,
+      canonicalTarget,
+    );
 
     const content = await deps.readText(
       path.join(deps.paths.stateDir, file),
@@ -27,13 +39,42 @@ export async function loadFleetTargetIndex(
     const fields = parseMetaFile(content);
     if (fields.window) {
       allowedTargets.add(fields.window);
+      addCanonicalTarget(
+        canonicalTargets,
+        ambiguousTargets,
+        fields.window,
+        canonicalTarget,
+      );
     }
     if (fields.terminal) {
       allowedTargets.add(fields.terminal);
+      addCanonicalTarget(
+        canonicalTargets,
+        ambiguousTargets,
+        fields.terminal,
+        canonicalTarget,
+      );
     }
   }
 
-  return { taskIds, allowedTargets };
+  return { taskIds, allowedTargets, canonicalTargets, ambiguousTargets };
+}
+
+function addCanonicalTarget(
+  canonicalTargets: Map<string, string>,
+  ambiguousTargets: Set<string>,
+  target: string,
+  canonicalTarget: string,
+): void {
+  const existingTarget = canonicalTargets.get(target);
+  if (existingTarget && existingTarget !== canonicalTarget) {
+    canonicalTargets.delete(target);
+    ambiguousTargets.add(target);
+    return;
+  }
+  if (!ambiguousTargets.has(target)) {
+    canonicalTargets.set(target, canonicalTarget);
+  }
 }
 
 export function normalizeFleetScopedTarget(
@@ -54,6 +95,31 @@ export function normalizeFleetScopedTarget(
     );
   }
   return target;
+}
+
+export function canonicalizeFleetScopedTarget(
+  index: FleetTargetIndex,
+  target: string,
+): string {
+  normalizeFleetScopedTarget(index, target);
+  if (index.taskIds.has(target)) {
+    return `fm-${target}`;
+  }
+  if (target.startsWith("fm-") && index.taskIds.has(target.slice(3))) {
+    return target;
+  }
+  const canonicalTarget = index.canonicalTargets.get(target);
+  if (!canonicalTarget) {
+    if (index.ambiguousTargets.has(target)) {
+      throw new Error(
+        "target ambiguous: recorded by multiple state/*.meta files; use a task id",
+      );
+    }
+    throw new Error(
+      "target not in fleet: must be a task id or window value from state/*.meta",
+    );
+  }
+  return canonicalTarget;
 }
 
 export function assertFleetTaskId(
