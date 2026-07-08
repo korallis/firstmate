@@ -44,6 +44,15 @@ Unsupported supervisor backends refuse at daemon startup.
 Stalled escalation delivery raises `state/.subsuper-inject-wedged` after `FM_MAX_DEFER_SECS` instead of silently deferring forever.
 `fm-send.sh` selects a pre-Enter popup-settle for slash commands and for codex `$...` skill invocations using the target's recorded `harness=` meta, then adds its own `FM_SEND_SETTLE` pause after successful text sends so immediate peeks catch the receiving turn starting; the sub-supervisor uses only the shared submit core and does not pay that post-submit pause.
 
+## Cursor MCP surface
+
+The optional `mcp/` package exposes a stdio MCP server for Cursor's native chat and agents panel.
+It is deliberately a thin wrapper over existing firstmate disk state and `bin/fm-*` scripts, not a second orchestration path.
+Read-only tools expose the live backlog, fleet metadata, pane peeks, and reconciled crew state.
+`steer_task` is the only mutating tool and sends one newline-free line through `bin/fm-send.sh`.
+`peek_task` and `steer_task` accept only task ids or recorded endpoint values from this home's `state/*.meta`, so arbitrary backend session selectors are not a general escape hatch.
+Setup, exact tool contracts, and smoke checks are documented in [cursor-mcp.md](cursor-mcp.md).
+
 ## Runtime session backends
 
 The runtime backend is the session-provider layer below firstmate's scripts.

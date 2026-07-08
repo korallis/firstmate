@@ -16,6 +16,14 @@ Set the local, gitignored `config/backlog-backend` file to `manual` to force man
 Absent or `tasks-axi` selects the default tasks-axi backend.
 The file format is unchanged in both modes; tasks-axi and manual edits produce the same `## In flight`, `## Queued`, and `## Done` sections.
 
+## Cursor MCP manifest (mcp/mcp.json)
+
+The tracked [`mcp/mcp.json`](../mcp/mcp.json) manifest registers the optional `firstmate` MCP server for Cursor's native chat and agents panel.
+It runs `npm --silent --prefix ${workspaceFolder}/mcp run start` as a stdio server and passes `${env:FM_HOME}` through to the server process.
+When `FM_HOME` is unset, the server reads the checkout root as the operational home.
+Set `FM_HOME` when Cursor should inspect a different firstmate home, such as a secondmate home.
+The server still runs wrapper scripts from the checkout that contains `mcp/`, and the tool contracts are documented in [`docs/cursor-mcp.md`](cursor-mcp.md).
+
 ## Runtime backend (config/backend / FM_BACKEND)
 
 For spawn-capable adapters, the runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.
@@ -229,7 +237,7 @@ FM_BACKEND=             # optional runtime backend override for new spawns; tmux
 HERDR_SESSION=default  # herdr-only: named session for normal backend ops; not enough for destructive cleanup (docs/herdr-backend.md)
 FM_BACKEND_HERDR_COMPOSER_LINES=20  # herdr-only: tail lines scanned by composer-state guard/fallback paths; idle-baseline submit confirmation uses agent-state
 FM_BACKEND_HERDR_IDLE_RE='^Type a message\.\.\.$'  # herdr-only: empty-composer placeholder regex after border/prompt stripping
-FM_BACKEND_HERDR_BARE_PROMPT_RE='^[❯›]'  # herdr-only: verified agent glyphs recognized as an UNBORDERED (bare) composer row, e.g. claude's ❯ or codex's › (docs/herdr-backend.md "Incident (2026-07-07)")
+FM_BACKEND_HERDR_BARE_PROMPT_RE='^(❯|›)'  # herdr-only: verified agent glyphs recognized as an UNBORDERED (bare) composer row, written as alternation so LC_ALL=C cannot byte-match unrelated box glyphs (docs/herdr-backend.md "Incident (2026-07-07)")
 FM_BACKEND_HERDR_SUBMIT_POLLS=6  # herdr-only: agent-state samples spread across each Enter attempt's budget when confirming a submit (docs/herdr-backend.md "Native agent-state submit confirmation")
 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6  # herdr-only: minimum per-Enter confirmation budget before polling agent-state after an idle baseline
 FM_BACKEND_ORCA_COMPOSER_LINES=200  # orca-only: terminal-read lines scanned to locate the composer row for submit verification
