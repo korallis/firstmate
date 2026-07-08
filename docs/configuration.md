@@ -107,15 +107,19 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 
 ## Harness support
 
-claude, codex, opencode, pi, and grok are all empirically verified; new harnesses get verified through a supervised trial task before joining the set.
+claude, codex, opencode, pi, and grok are all empirically verified dispatch adapters; new dispatch harnesses get verified through a supervised trial task before joining the set.
+Cursor C0 is primary-session detection and plugin packaging only.
+`fm-harness.sh` can print `cursor` for firstmate's own session when Cursor exports `CURSOR_AGENT` or `CURSOR_EXTENSION_HOST_ROLE=agent-exec`, and `fm-lock.sh` recognizes Cursor's durable `agent-exec` process signature for the per-home session lock.
+`fm-harness.sh crew` and `fm-harness.sh secondmate` filter `cursor` to `unknown` until Cursor-native spawn and dispatch are verified end to end.
+When running the primary in Cursor, set `config/crew-harness` to one of the verified dispatch adapters before spawning crewmates or secondmates.
 The verified adapter knowledge - busy signatures, interrupt and exit commands, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
 `config/crew-harness` is a local, gitignored file containing one adapter name for crewmate and scout launches.
-When it is absent or contains `default`, crewmates mirror the firstmate's own harness.
+When it is absent or contains `default`, crewmates mirror the firstmate's own dispatchable harness.
 `config/secondmate-harness` is a separate local, gitignored file containing the adapter the primary uses to launch secondmate agents, optionally followed by model and effort tokens on the same line.
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
 A bare `<harness>` preserves the previous behavior: harness only, with no model or effort launch flag.
-When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
+When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own dispatchable harness, and no model or effort is read from that file.
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
 An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.

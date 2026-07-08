@@ -32,7 +32,8 @@ But the moment you want three project tasks done in parallel - fixes, investigat
 firstmate flips the model.
 You talk to a single agent - the first mate - and it runs the crew for you: spawning autonomous agents in a visible session backend, giving each a clean git worktree, supervising them to completion, and handing you finished PRs, approved local merges, or standalone investigation reports.
 For larger fleets, you can opt in to persistent secondmates: domain supervisors that are still ordinary direct reports, but run from their own isolated firstmate homes.
-There is no app to install; the orchestrator is `AGENTS.md`, bundled firstmate skills, and helper scripts that any terminal coding agent can follow.
+There is no mandatory app to install; the orchestrator is `AGENTS.md`, bundled firstmate skills, and helper scripts that any terminal coding agent can follow.
+Cursor users can optionally install the C0 plugin from `.cursor-plugin/` to wire those same internal skills into Cursor's Customize surface without copying them.
 
 This is not an agent harness. This is not a single skill. This is not a CLI.
 This is.. a directory that turns any agent into your firstmate, and you the captain.
@@ -54,7 +55,8 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 
 ## Quick Start
 
-**Requirements:** a verified agent harness (claude, codex, opencode, pi, or grok), git with GitHub auth, and tmux for the reference session backend.
+**Requirements:** a verified dispatch harness (claude, codex, opencode, pi, or grok), git with GitHub auth, and tmux for the reference session backend.
+Cursor C0 can run the primary firstmate and install the skill bundle, but crewmate and secondmate dispatch still need one of the verified harnesses configured.
 The first mate detects and offers to install everything else.
 
 ```sh
@@ -132,6 +134,7 @@ Agent-only reference skills live under `.agents/skills/` and are loaded by first
 Firstmate's skills live in two separate places with different audiences:
 
 - `.agents/skills/` - agent-loaded skills (this section's table, plus firstmate's agent-only reference skills). Every one of these assumes a live firstmate home and is meaningless, or actively misleading, installed anywhere else, so each carries `metadata.internal: true` in its frontmatter. That flag hides them from installer discovery (tools like the [skills.sh](https://skills.sh) `npx skills add` installer) without affecting how firstmate itself loads them - frontmatter metadata is inert to the agent's own skill loader.
+  The Cursor C0 plugin points at this directory directly from `.cursor-plugin/plugin.json`, so it still uses the canonical files.
 - `skills/` - public, installer-facing skills meant to be installed standalone into any project, independent of firstmate.
   Each one is a self-contained skill with no dependency on firstmate's paths, tools, or vocabulary.
   Today that is `skills/stow`, a generic session-knowledge-sweep skill that routes findings by explicit instruction first, then existing local conventions, then a private `.stow-notes.md` fallback in the current directory, and closes with a resume pointer for the next session.
@@ -149,6 +152,7 @@ Firstmate's skills live in two separate places with different audiences:
 - [docs/codex-app-backend.md](docs/codex-app-backend.md) - Codex App backend boundary, evidence, and rollout contract.
 - [docs/turnend-guard.md](docs/turnend-guard.md) - the primary session's structural "no turn ends blind" backstop: verified Claude Code Stop-hook mechanism, scoping, and known gaps.
 - [docs/scripts.md](docs/scripts.md) - the `bin/` toolbelt reference.
+- [.cursor-plugin/README.md](.cursor-plugin/README.md) - Cursor Customize plugin packaging and the C0 integration boundary.
 - [`AGENTS.md`](AGENTS.md) - firstmate's full operating manual for the orchestrator agent.
 - [CONTRIBUTING.md](CONTRIBUTING.md) - how to contribute, including the dev/test commands.
 
