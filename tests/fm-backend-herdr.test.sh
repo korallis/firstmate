@@ -960,6 +960,28 @@ test_composer_state_codex_bare_prompt_glyph_is_empty() {
   pass "fm_backend_herdr_composer_state: a real-codex unbordered '›' prompt row reads empty"
 }
 
+test_composer_state_c_locale_keeps_box_rows_out_of_bare_prompt_match() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/composer-c-locale"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '  ╭────────────────────────╮\n  │ ❯                      │\n  ╰──────── Composer ─────╯\n\n  Shift+Tab:mode\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" LC_ALL=C \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+  [ "$out" = empty ] || fail "LC_ALL=C should not misread box-drawing rows as bare prompt glyphs, got '$out'"
+  pass "fm_backend_herdr_composer_state: LC_ALL=C keeps box rows out of the bare prompt match"
+}
+
+test_composer_state_c_locale_strips_utf8_prompt_prefix() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/composer-c-locale-ghost"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '  ╭────────────────────────╮\n  │ ❯ Type a message...    │\n  ╰──────── Composer ─────╯\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" LC_ALL=C \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+  [ "$out" = empty ] || fail "LC_ALL=C should strip the UTF-8 prompt before checking idle placeholder text, got '$out'"
+  pass "fm_backend_herdr_composer_state: LC_ALL=C strips UTF-8 prompt prefixes"
+}
+
 # --- wait_for_working: the native agent-state poll-and-classify primitive ---
 # Direct unit coverage for fm_backend_herdr_wait_for_working, the helper
 # fm_backend_herdr_send_text_submit now uses instead of composer scraping
@@ -1079,7 +1101,6 @@ test_wait_for_working_treats_blocked_as_submit_active() {
 # deterministic call-count assertions; the multi-sample behavior itself is
 # covered above by the wait_for_working tests and by
 # test_send_text_submit_slow_transition_within_one_enter_needs_no_extra_enter.
-
 test_send_text_submit_detects_landed_send() {
   local dir log resp fb out enter_count
   dir="$TMP_ROOT/submit-ok"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -1641,6 +1662,8 @@ test_composer_state_claude_unbordered_prompt_is_empty
 test_composer_state_claude_unbordered_prompt_is_pending
 test_composer_state_bare_prompt_below_stale_bordered_banner_wins
 test_composer_state_codex_bare_prompt_glyph_is_empty
+test_composer_state_c_locale_keeps_box_rows_out_of_bare_prompt_match
+test_composer_state_c_locale_strips_utf8_prompt_prefix
 test_wait_for_working_returns_busy_on_first_poll
 test_wait_for_working_catches_a_slow_transition_mid_window
 test_wait_for_working_samples_budget_endpoint_without_final_sleep
