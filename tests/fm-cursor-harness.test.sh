@@ -48,7 +48,21 @@ test_plugin_manifest_paths_exist() {
   local manifest skills
   manifest="$ROOT/.cursor-plugin/plugin.json"
   assert_present "$manifest" "plugin manifest is missing"
-  skills=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["skills"])' "$manifest")
+  if ! skills=$(python3 - "$manifest" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as f:
+    skills = json.load(f).get("skills")
+
+if not isinstance(skills, str) or not skills:
+    raise SystemExit("manifest skills must be a non-empty string")
+
+print(skills)
+PY
+  ); then
+    fail "plugin manifest does not contain a valid skills path"
+  fi
   assert_present "$ROOT/$skills" "plugin skills path does not exist: $skills"
   pass "plugin.json component paths exist on disk"
 }
