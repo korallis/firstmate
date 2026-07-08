@@ -141,14 +141,14 @@ describe("steer_task", () => {
     );
   });
 
-  it("accepts meta window values", async () => {
+  it("canonicalizes recorded endpoint values before peeking", async () => {
     const calls: string[][] = [];
     const deps = mockDeps(async (_script, args) => {
       calls.push(args);
       return { stdout: "ok\n", stderr: "", exitCode: 0 };
     });
-    await peekTask(deps, "fm:demo-task-a1");
-    assert.deepEqual(calls, [["fm:demo-task-a1"]]);
+    await peekTask(deps, "session:secondmate:1");
+    assert.deepEqual(calls, [["fm-demo-secondmate-c3"]]);
   });
 
   it("canonicalizes recorded endpoint values before steering", async () => {

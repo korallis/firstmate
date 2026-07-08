@@ -5,7 +5,6 @@ import {
   assertSteerLine,
   canonicalizeFleetScopedTarget,
   loadFleetTargetIndex,
-  normalizeFleetScopedTarget,
 } from "./fleet-targets.js";
 import type { FmPaths } from "./paths.js";
 import { listMetaFiles, parseMetaFile, readTextFile } from "./paths.js";
@@ -120,7 +119,7 @@ export async function peekTask(
   lines?: number,
 ): Promise<string> {
   const index = await loadFleetTargetIndex(deps);
-  const scriptTarget = normalizeFleetScopedTarget(index, target);
+  const scriptTarget = canonicalizeFleetScopedTarget(index, target);
   const args = lines !== undefined
     ? [scriptTarget, String(lines)]
     : [scriptTarget];
