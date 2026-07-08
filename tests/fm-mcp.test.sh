@@ -14,7 +14,7 @@ test_package_builds_and_unit_tests_pass() {
   if ! command -v npm >/dev/null 2>&1; then
     fail "npm is required for mcp tests"
   fi
-  ( cd "$MCP_DIR" && npm install --silent && npm test ) || fail "mcp unit tests failed"
+  ( cd "$MCP_DIR" && npm ci --silent && npm test ) || fail "mcp unit tests failed"
   pass "mcp: unit tests pass"
 }
 
