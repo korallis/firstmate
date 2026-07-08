@@ -37,7 +37,7 @@ If the captain asks for a new harness, propose verifying it first: spawn a trivi
 
 ## Detection
 
-`bin/fm-harness.sh` prints firstmate's own harness, using verified env markers first and then process ancestry.
+`bin/fm-harness.sh` prints firstmate's own harness, using known env markers first and then process ancestry.
 It can print `cursor` for a Cursor primary when `CURSOR_AGENT` is set or when `CURSOR_EXTENSION_HOST_ROLE=agent-exec`.
 `bin/fm-lock.sh` also recognizes Cursor's durable `agent-exec` process signature for session-lock ownership.
 `bin/fm-harness.sh crew` resolves the effective crewmate harness from `config/crew-harness` (absent or `default` -> own dispatchable harness).

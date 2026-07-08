@@ -56,7 +56,7 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 ## Quick Start
 
 **Requirements:** a verified dispatch harness (claude, codex, opencode, pi, or grok), git with GitHub auth, and tmux for the reference session backend.
-Cursor C0 can run the primary firstmate and install the skill bundle, but crewmate and secondmate dispatch still need one of the verified harnesses configured.
+Cursor C0 can run the primary firstmate and install the skill bundle, but crewmate and secondmate dispatch still need one of the verified dispatch harnesses configured.
 The first mate detects and offers to install everything else.
 
 ```sh

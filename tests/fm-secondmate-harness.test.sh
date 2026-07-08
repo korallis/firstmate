@@ -7,11 +7,12 @@
 #   A) Harness split. config/secondmate-harness sets the harness the PRIMARY uses
 #      to launch SECONDMATE agents, independent of config/crew-harness (the
 #      crewmate harness). fm-harness.sh secondmate resolves the fallback chain
-#      config/secondmate-harness -> config/crew-harness -> own; an absent or
-#      "default" secondmate-harness behaves exactly as the crew harness did before
-#      this knob existed (full backward-compat). fm-spawn.sh resolves a secondmate
-#      launch through that mode, durably (every respawn re-resolves), while an
-#      explicit per-spawn harness arg still wins.
+#      config/secondmate-harness -> config/crew-harness -> own dispatchable
+#      harness; an absent or "default" secondmate-harness behaves exactly as the
+#      crew harness did before this knob existed (full backward-compat).
+#      fm-spawn.sh resolves a secondmate launch through that mode, durably
+#      (every respawn re-resolves), while an explicit per-spawn harness arg still
+#      wins.
 #   B) Inheritance. The primary pushes a declared, extensible set of LOCAL
 #      (gitignored) config items - config/crew-dispatch.json, config/crew-harness,
 #      and config/backlog-backend - down into each secondmate home's config/, so
@@ -625,10 +626,11 @@ test_spawn_explicit_harness_uses_explicit_profile_axes() {
   pass "C8 spawn: an explicit --harness still honors explicit model/effort flags"
 }
 
-# The harness fallback chain (secondmate-harness -> crew-harness -> own) still
-# resolves correctly with no model/effort tokens anywhere in the chain, and a
-# crew/scout (non-secondmate) launch is entirely unaffected by this feature: no
-# model/effort is invented for it even though its own project has no profile set.
+# The harness fallback chain (secondmate-harness -> crew-harness -> own
+# dispatchable harness) still resolves correctly with no model/effort tokens
+# anywhere in the chain, and a crew/scout (non-secondmate) launch is entirely
+# unaffected by this feature: no model/effort is invented for it even though its
+# own project has no profile set.
 test_spawn_fallback_chain_and_crew_scout_unaffected() {
   local w sm meta home proj wt fakebin launchlog id launch
   w="$TMP_ROOT/spawn-fallback-and-crew"

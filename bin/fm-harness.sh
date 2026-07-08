@@ -2,10 +2,10 @@
 # Detect the agent harness this process tree runs on.
 # Usage: fm-harness.sh                  print own harness: claude|codex|cursor|opencode|pi|grok|unknown
 #        fm-harness.sh crew             print the effective CREWMATE harness
-#                                        (config/crew-harness; "default" resolves to own)
+#                                        (config/crew-harness; "default" resolves to own dispatchable harness)
 #        fm-harness.sh secondmate       print the harness the PRIMARY uses to launch
 #                                        SECONDMATE agents: config/secondmate-harness ->
-#                                        config/crew-harness -> own. "default" or absent
+#                                        config/crew-harness -> own dispatchable harness. "default" or absent
 #                                        defers to the crew resolution, so an unset
 #                                        secondmate-harness behaves exactly as the crew
 #                                        harness did before this knob existed.
@@ -18,8 +18,8 @@
 # harness only, no model/effort. Only the first non-empty, non-comment line is parsed.
 # Model/effort come ONLY from this file - config/crew-harness stays a bare adapter
 # name and is never parsed for a model.
-# Detection layers: verified environment markers first, then process ancestry.
-# Record each newly verified env marker here.
+# Detection layers: known environment markers first, then process ancestry.
+# Record each newly verified adapter env marker here.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +28,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 detect_own() {
-  # Layer 1: environment markers for verified harnesses.
+  # Layer 1: environment markers for known own-harness detection.
   # cursor: CURSOR_AGENT is documented for agent terminal sessions
   # (cursor.com/docs/agent/tools/terminal). CURSOR_EXTENSION_HOST_ROLE=agent-exec
   # is used by agent-exec shells when CURSOR_AGENT is absent (vercel/detect-agent).
@@ -82,7 +82,7 @@ filter_dispatchable() {
 }
 
 # Resolve the effective crewmate harness: config/crew-harness (a bare adapter
-# name) wins; absent or "default" mirrors firstmate's own harness.
+# name) wins; absent or "default" mirrors firstmate's own dispatchable harness.
 resolve_crew() {
   local crew='' own=
   [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
@@ -128,7 +128,7 @@ secondmate_field() {
 }
 
 # Resolve the harness the PRIMARY uses to launch SECONDMATE agents: a fallback
-# chain config/secondmate-harness -> config/crew-harness -> own. An absent or
+# chain config/secondmate-harness -> config/crew-harness -> own dispatchable harness. An absent or
 # "default" secondmate-harness token defers to the crew resolution, so an unset
 # secondmate-harness behaves exactly as before this knob existed (a secondmate
 # launched on the crew harness). config/secondmate-harness is the PRIMARY's own
