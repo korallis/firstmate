@@ -3,11 +3,14 @@ Mode: Grok background-notify supervision.
 When this session owns supervision and away mode is not active:
 1. Drain first with `bin/fm-wake-drain.sh`.
 2. Source `__FM_X_MODE_ENV__` first when X mode is active.
-3. Arm with Grok's tracked background tool, as its own call:
+3. Arm with Grok's tracked background tool, as its own standalone tool call:
 
-   `run_terminal_command` with `background: true` on:
+   `run_terminal_command` with `background: true` on exactly:
    `[ -f __FM_X_MODE_ENV_SH__ ] && . __FM_X_MODE_ENV_SH__; exec bin/fm-watch-arm.sh`
 
+   Blessed shape only: optional `export FM_HOME=...`, optional `cd` into the home,
+   optional x-mode source, then a sole final `exec bin/fm-watch-arm.sh` (or
+   `bin/fm-watch-arm.sh`). Nothing else in the same command string.
 4. Trust only the arm's one-line status.
 5. `watcher: started ...` or `watcher: attached ...` means a live cycle exists.
    On attach, the background task stays live until that existing cycle ends; it does not exit immediately.
@@ -16,23 +19,30 @@ When this session owns supervision and away mode is not active:
    The background arm remains the live wait until the cycle ends.
 8. Waiting is silent.
 9. Never use shell `&` for firstmate supervision.
-10. Never bundle the arm onto another command.
-    A shell `&`, a truncating pipe, or bundling is denied automatically by the PreToolUse seatbelt (`bin/fm-arm-pretool-check.sh`) whenever this project's Grok hooks are trusted.
+10. Never bundle the arm onto another command (diagnostics, peeks, drains, `rg`,
+    `if`/`for` wrappers, pipes). Bundle denials land as `watcher-bundled` from
+    the PreToolUse seatbelt (`bin/fm-arm-pretool-check.sh`) whenever this
+    project's Grok hooks are trusted. Re-arm must be a separate tool call.
 
 Grok injects a synthetic user message with `synthetic_reason: task_completed` when the background arm completes.
 When you see a background-task-completed system reminder for the arm:
 1. Run `bin/fm-wake-drain.sh` first.
 2. Optionally fetch arm output with `get_command_or_subagent_output(<task_id>)` for the reason line.
 3. Handle `signal`, `stale`, `check`, or `heartbeat` using the harness-neutral contract in `AGENTS.md`.
-4. Re-arm the next cycle with the same background `bin/fm-watch-arm.sh` call if work remains in flight or X mode still needs polling.
+4. Re-arm the next cycle with the same standalone background arm call if work remains in flight or X mode still needs polling.
 5. Do not invent a wake from an attach-status line alone.
    Drain the queue and act only on real wake records or a real watcher reason line.
    Re-arm attaches to an existing cycle when one is already healthy, so the background task stays live until that cycle ends.
 
 Grok Stop hooks are passive.
-The primary project hook runs `bin/fm-turnend-guard-grok.sh`, which forces at most one same-session follow-up via `grok --resume` when a turn would end blind.
-That is a backstop, not the normal wake path.
-After any forced follow-up, arm the watcher with the background protocol above.
+The primary project hook runs `bin/fm-turnend-guard-grok.sh`.
+When a turn would end blind, the adapter writes `state/.supervision-gap` and
+mechanically ensures this home's `bin/fm-watch.sh` is running (detached
+singleton). It never spawns headless `grok --resume` (that path produced hung
+zombie processes and never reached the interactive TUI; 2026-07-11).
+The mechanical ensure is a total-outage backstop only: background-notify wakes
+still require the interactive TUI to arm `bin/fm-watch-arm.sh` as its own
+tracked background task via the protocol above.
 
 Interactive TUI primary sessions are the supported supervision host.
 Headless `grok -p` may wait for background process exit but does not reliably surface full auto-wake model output; do not run the primary firstmate as a one-shot headless process.

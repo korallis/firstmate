@@ -225,6 +225,12 @@ test_direct_policy_contract() {
   assert_policy direct-leading-redirection $'deny\twatcher-redirection' '>/tmp/out bin/fm-watch-arm.sh'
   assert_policy direct-unclassifiable $'deny\tunclassifiable-protected-command' "bin/fm-watch-arm.sh 'unterminated"
   assert_policy direct-unsupported $'deny\tunclassifiable-protected-command' 'if true; then bin/fm-watch-arm.sh; fi'
+  # Unsupported if/for bodies still deny real unquoted protected executions, but
+  # data-only mentions (quoted list words, rg of docs) must not false-positive
+  # after the quote-aware rawMentionsProtectedExecution scan (2026-07-11).
+  assert_policy direct-unsupported-quoted-data allow 'for c in "bin/fm-watch-arm.sh"; do echo; done'
+  assert_policy direct-unsupported-single-quoted-data allow "for c in 'bin/fm-watch-checkpoint.sh'; do :; done"
+  assert_policy direct-unsupported-rg-docs allow "rg -n 'bin/fm-watch-arm.sh' docs"
   assert_policy direct-constructed-payload $'deny\twatcher-nested' "WATCHER='bin/fm-watch-arm.sh &'; bash -lc \"\$WATCHER\""
   assert_policy direct-parameter-export allow 'export FM_HOME=${HOME}; bin/fm-watch-checkpoint.sh --seconds 180'
   assert_policy direct-expanded-arm-blessed allow '$FM_HOME/bin/fm-watch-arm.sh'

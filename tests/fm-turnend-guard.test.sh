@@ -371,53 +371,143 @@ test_hook_runs_fast() {
   pass "fm-turnend-guard: runs well under the generous timing margin (${elapsed_s}s)"
 }
 
-test_grok_adapter_forces_one_resume_when_unhealthy() {
-  local dir fakebin log out status
-  dir=$(make_primary_dir "$TMP_ROOT/grok-adapter-block")
+test_grok_adapter_ensures_watcher_when_unhealthy() {
+  local dir fakebin grok_log watch_log out status gap
+  dir=$(make_primary_dir "$TMP_ROOT/grok-adapter-ensure")
   : > "$dir/state/task1.meta"
-  fakebin=$(fm_fakebin "$TMP_ROOT/grok-adapter-fakebin")
-  log="$TMP_ROOT/grok-adapter-call.log"
+  fakebin=$(fm_fakebin "$TMP_ROOT/grok-adapter-ensure-fakebin")
+  grok_log="$TMP_ROOT/grok-adapter-ensure-grok.log"
+  watch_log="$TMP_ROOT/grok-adapter-ensure-watch.log"
   cat > "$fakebin/grok" <<EOF
 #!/usr/bin/env bash
 {
-  printf 'active=%s\n' "\${GROK_TURNEND_GUARD_ACTIVE:-}"
-  printf 'home=%s\n' "\${GROK_HOME:-}"
   printf 'args:'
   for arg in "\$@"; do
     printf ' <%s>' "\$arg"
   done
   printf '\n'
-} >> "$log"
+} >> "$grok_log"
 EOF
   chmod +x "$fakebin/grok"
-  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 0 "$status" "grok adapter must fail open after queuing a forced resume"
+  # Detached ensure target: record the invoke and hold a live pid the lock can
+  # match if the adapter ever promotes it; the test only asserts invoke + gap.
+  cat > "$dir/bin/fm-watch.sh" <<EOF
+#!/usr/bin/env bash
+printf 'watch-started pid=%s home=%s\n' "\$\$" "\${FM_HOME:-}" >> "$watch_log"
+# Hold briefly so the adapter's short healthy-poll can observe a live process
+# if lock bookkeeping is complete; exit cleanly either way.
+sleep 2
+EOF
+  chmod +x "$dir/bin/fm-watch.sh"
+  # Unset ambient FM_HOME so the adapter's operational home is the scenario dir
+  # (prefer-FM_HOME path is covered by test_grok_adapter_prefers_fm_home_for_gap_state).
+  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | env -u FM_HOME -u FM_STATE_OVERRIDE PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  expect_code 0 "$status" "grok adapter must fail open after mechanical watcher ensure"
   [ -z "$out" ] || fail "grok adapter printed output: $out"
-  assert_contains "$(cat "$log")" 'active=1' "grok adapter must mark its forced resume as loop-guarded"
-  assert_contains "$(cat "$log")" '<--resume>' "grok adapter must resume the current session"
-  assert_contains "$(cat "$log")" '<session-test>' "grok adapter must pass the hook session id"
-  assert_not_contains "$(cat "$log")" '<--permission-mode>' "grok adapter must not add a stronger permission mode"
-  assert_not_contains "$(cat "$log")" '<bypassPermissions>' "grok adapter must not bypass permissions on forced resume"
-  assert_contains "$(cat "$log")" 'TURN WOULD END BLIND' "grok adapter must carry the guard reason into the forced resume"
-  pass "fm-turnend-guard-grok: forces one same-session resume when the shared predicate blocks"
+  [ ! -e "$grok_log" ] || fail "grok adapter must never spawn grok --resume: $(cat "$grok_log")"
+  gap=$(cat "$dir/state/.supervision-gap" 2>/dev/null || true)
+  [ -n "$gap" ] || fail "grok adapter must write state/.supervision-gap when the predicate blocks"
+  assert_contains "$gap" 'resume supervision' "gap marker must carry the shared guard reason"
+  # Wait briefly for the detached nohup child to land its log line.
+  i=0
+  while [ "$i" -lt 25 ]; do
+    [ -s "$watch_log" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -s "$watch_log" ] || fail "grok adapter must detach-start bin/fm-watch.sh when the watcher is unhealthy"
+  assert_contains "$(cat "$watch_log")" 'watch-started' "detached ensure must invoke fm-watch.sh"
+  assert_contains "$(cat "$watch_log")" "home=$dir" "ensure must export FM_HOME to the operational home"
+  pass "fm-turnend-guard-grok: writes gap marker and ensures watcher; never spawns grok --resume"
 }
 
-test_grok_adapter_loop_guard_skips_resume() {
-  local dir fakebin log out status
+test_grok_adapter_skips_ensure_when_watcher_already_healthy() {
+  local dir fakebin grok_log watch_log out status pid identity
+  dir=$(make_primary_dir "$TMP_ROOT/grok-adapter-healthy")
+  : > "$dir/state/task1.meta"
+  # Need a real fm-watch.sh path for lock matching even though it must not start.
+  printf '#!/usr/bin/env bash\nprintf started >> "%s"\n' "$TMP_ROOT/grok-adapter-healthy-watch.log" > "$dir/bin/fm-watch.sh"
+  chmod +x "$dir/bin/fm-watch.sh"
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "could not identify live watcher holder for healthy-path test"
+  }
+  record_watcher_lock "$dir" "$pid" "$identity"
+  touch "$dir/state/.last-watcher-beat"
+  fakebin=$(fm_fakebin "$TMP_ROOT/grok-adapter-healthy-fakebin")
+  grok_log="$TMP_ROOT/grok-adapter-healthy-grok.log"
+  cat > "$fakebin/grok" <<EOF
+#!/usr/bin/env bash
+printf 'called\n' >> "$grok_log"
+EOF
+  chmod +x "$fakebin/grok"
+  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | env -u FM_HOME -u FM_STATE_OVERRIDE PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "grok adapter must exit 0 when the shared predicate is already healthy"
+  [ -z "$out" ] || fail "grok adapter printed output on healthy path: $out"
+  [ ! -e "$grok_log" ] || fail "grok adapter must not spawn grok when healthy: $(cat "$grok_log")"
+  [ ! -e "$TMP_ROOT/grok-adapter-healthy-watch.log" ] || fail "grok adapter must not re-start watch when already healthy"
+  [ ! -e "$dir/state/.supervision-gap" ] || fail "healthy path must not write a gap marker (predicate exited 0)"
+  pass "fm-turnend-guard-grok: no ensure and no gap when watcher is already healthy"
+}
+
+test_grok_adapter_loop_guard_skips_ensure() {
+  local dir fakebin grok_log watch_log out status
   dir=$(make_primary_dir "$TMP_ROOT/grok-adapter-loop")
   : > "$dir/state/task1.meta"
   fakebin=$(fm_fakebin "$TMP_ROOT/grok-adapter-loop-fakebin")
-  log="$TMP_ROOT/grok-adapter-loop-call.log"
+  grok_log="$TMP_ROOT/grok-adapter-loop-grok.log"
+  watch_log="$TMP_ROOT/grok-adapter-loop-watch.log"
   cat > "$fakebin/grok" <<EOF
 #!/usr/bin/env bash
-printf 'called\n' >> "$log"
+printf 'called\n' >> "$grok_log"
 EOF
   chmod +x "$fakebin/grok"
-  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" GROK_TURNEND_GUARD_ACTIVE=1 bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 0 "$status" "grok adapter must allow its own forced resume turn to end"
+  cat > "$dir/bin/fm-watch.sh" <<EOF
+#!/usr/bin/env bash
+printf 'watch-started\n' >> "$watch_log"
+EOF
+  chmod +x "$dir/bin/fm-watch.sh"
+  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | env -u FM_HOME -u FM_STATE_OVERRIDE PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" GROK_TURNEND_GUARD_ACTIVE=1 bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  expect_code 0 "$status" "grok adapter must exit 0 under the legacy loop-guard env"
   [ -z "$out" ] || fail "grok adapter printed output while loop-guarded: $out"
-  [ ! -e "$log" ] || fail "grok adapter spawned another resume while loop-guarded: $(cat "$log")"
-  pass "fm-turnend-guard-grok: loop guard prevents a nested resume loop"
+  [ ! -e "$grok_log" ] || fail "grok adapter spawned grok while loop-guarded: $(cat "$grok_log")"
+  [ ! -e "$watch_log" ] || fail "grok adapter ensured watcher while loop-guarded: $(cat "$watch_log")"
+  [ ! -e "$dir/state/.supervision-gap" ] || fail "loop-guarded adapter must not write a gap marker"
+  pass "fm-turnend-guard-grok: legacy loop guard skips ensure and never spawns grok"
+}
+
+test_grok_adapter_prefers_fm_home_for_gap_state() {
+  local dir home fakebin out status gap
+  dir=$(make_primary_dir "$TMP_ROOT/grok-adapter-fm-home")
+  home="$TMP_ROOT/grok-adapter-ops-home"
+  mkdir -p "$home/state" "$home/bin"
+  # Ops-home watch path preferred when executable.
+  cat > "$home/bin/fm-watch.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$home/bin/fm-watch.sh"
+  # wake-lib lives next to the chosen WATCH script.
+  cp "$dir/bin/fm-wake-lib.sh" "$home/bin/fm-wake-lib.sh"
+  : > "$home/state/task1.meta"
+  fakebin=$(fm_fakebin "$TMP_ROOT/grok-adapter-fm-home-fakebin")
+  cat > "$fakebin/grok" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$fakebin/grok"
+  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | PATH="$fakebin:$PATH" FM_HOME="$home" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  expect_code 0 "$status" "grok adapter must fail open with FM_HOME set"
+  [ -z "$out" ] || fail "grok adapter printed output with FM_HOME: $out"
+  gap=$(cat "$home/state/.supervision-gap" 2>/dev/null || true)
+  [ -n "$gap" ] || fail "gap marker must land under FM_HOME/state, not the workspace root"
+  [ ! -e "$dir/state/.supervision-gap" ] || fail "gap marker must not be written to workspace state when FM_HOME is set"
+  pass "fm-turnend-guard-grok: prefers FM_HOME for gap marker and ensure state"
 }
 
 test_settings_hook_uses_claude_project_dir() {
@@ -733,8 +823,10 @@ test_hook_silent_in_crewmate_worktree
 test_hook_silent_without_jq
 test_hook_silent_without_stdin
 test_hook_runs_fast
-test_grok_adapter_forces_one_resume_when_unhealthy
-test_grok_adapter_loop_guard_skips_resume
+test_grok_adapter_ensures_watcher_when_unhealthy
+test_grok_adapter_skips_ensure_when_watcher_already_healthy
+test_grok_adapter_loop_guard_skips_ensure
+test_grok_adapter_prefers_fm_home_for_gap_state
 test_settings_hook_uses_claude_project_dir
 test_codex_hook_invokes_shared_guard
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root

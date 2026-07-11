@@ -37,6 +37,33 @@ function rawMentionsProtected(command) {
   return /(?:^|[/\s'"`(])fm-watch(?:-(?:arm|checkpoint))?\.sh\b/.test(normalizeLineContinuations(command));
 }
 
+// Quote/flag-aware scan for unsupported-grammar fail-closed.
+// Used only when the tokenizer cannot model if/for/case bodies: deny real
+// unquoted protected executions, but allow data-only mentions (quoted strings,
+// --command fixtures, rg/doc probes) that previously blocked the Grok primary
+// on almost every diagnostic shell call (2026-07-11).
+function stripQuotedRegions(source) {
+  return source
+    .replace(/\$'(?:\\'|[^'])*'/g, "''")
+    .replace(/'[^']*'/g, "''")
+    .replace(/"(?:\\.|[^"\\])*"/g, '""');
+}
+
+function stripCommandFlagArgs(source) {
+  return source
+    .replace(/--command\s*=\s*\S+/g, "--command=_")
+    .replace(/--command\s+\S+/g, "--command _");
+}
+
+function rawMentionsProtectedExecution(command) {
+  let normalized = normalizeLineContinuations(command);
+  normalized = stripQuotedRegions(normalized);
+  normalized = stripCommandFlagArgs(normalized);
+  return /(?:^|[\s;|&()`]|&&|\|\|)(?:exec\s+)?(?:\S*\/)?fm-watch(?:-(?:arm|checkpoint))?\.sh\b/.test(
+    normalized,
+  );
+}
+
 function rawMentionsBroadKill(command) {
   const normalized = normalizeLineContinuations(command);
   return /fm-watch/.test(normalized) && /\b(?:pkill|kill)\b/.test(normalized);
@@ -838,7 +865,12 @@ function analyzeProgram(command, context, depth = 0) {
   const protectedFound = directProtected || nestedProtected || unclassifiableProtected;
   if (unclassifiableProtected) unsupported = true;
   const broadKillFound = broadKill || (unsupported && rawMentionsBroadKill(command));
-  if (unsupported && (protectedFound || rawMentionsProtected(command) || broadKillFound)) {
+  // Unsupported if/for/case grammar: fail closed when analysis found a protected
+  // execution, OR when unquoted protected paths remain after stripping quotes
+  // and --command args (covers if/for bodies the tokenizer does not model).
+  // Quoted/data-only mentions must NOT deny - that false-positive blocked Grok
+  // primary diagnostics and recovery loops constantly (2026-07-11).
+  if (unsupported && (protectedFound || broadKillFound || rawMentionsProtectedExecution(command))) {
     return { error: "unsupported compound grammar", protectedFound: true, broadKill: broadKillFound, pgrepWatcher, watcherPids: activeContext.watcherPids, program, nodeInfos };
   }
   return { error: "", protectedFound, directProtected, nestedProtected, broadKill: broadKillFound, pgrepWatcher, watcherPids: activeContext.watcherPids, program, nodeInfos };

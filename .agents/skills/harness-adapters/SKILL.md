@@ -51,7 +51,8 @@ Use that value for interrupt, exit, resume, and skill-invocation facts.
 
 Every verified primary harness has an empirically validated hook path for the "no turn ends blind" guard.
 `claude` and `codex` block directly through Stop hooks that preserve exit status 2 and stderr from `bin/fm-turnend-guard.sh`.
-`opencode`, `pi`, and `grok` expose passive lifecycle callbacks for this purpose, so their tracked primary adapters force one bounded follow-up or resume when the shared predicate blocks.
+`opencode` and `pi` expose passive lifecycle callbacks for this purpose, so their tracked primary adapters force one bounded follow-up when the shared predicate blocks.
+`grok` is also passive, but its adapter never forces a model resume: it writes a gap marker and ensures the detached watcher instead (see the grok section and `docs/turnend-guard.md`).
 The exact hook files, commands, validation transcripts, scoping rules, and fail-open tradeoffs are owned by `docs/turnend-guard.md`.
 When changing any primary turn-end hook, validate the real harness behavior in a scratch project or throwaway home before trusting it, then update that doc and the relevant concise fact below.
 
@@ -257,10 +258,17 @@ This keeps the hook outside the worktree, needs no trust grant, and writes only 
 `fm-teardown` removes the worktree pointer before returning a pooled worktree.
 Secondmate spawns skip the pointer (idle panes are healthy, no stale-pane detection for them).
 
-**Primary-session guard fact (verified 2026-07-08, Grok 0.2.91).**
+**Primary-session guard fact (verified 2026-07-08, Grok 0.2.91; ensure-watcher rewrite 2026-07-11).**
 The firstmate PRIMARY's own `.grok/hooks/fm-primary-turnend-guard.json` invokes `bin/fm-turnend-guard-grok.sh`.
 Grok Stop hooks are passive for this purpose: exit 2 does not make the model continue.
-The adapter therefore runs the shared predicate and, when it returns 2, forces one same-session follow-up with `grok --resume <sessionId> -p <guard-reason>` while setting `GROK_TURNEND_GUARD_ACTIVE=1` so the nested Stop hook does not recurse.
-It does not pass `--permission-mode`, so the passive hook cannot escalate the primary session's tool permissions.
+The adapter therefore runs the shared predicate and, when it returns 2, writes `state/.supervision-gap` (preferring `FM_HOME`) and detach-starts this home's `bin/fm-watch.sh` under a single-flight ensure lock.
+It never spawns headless `grok --resume` - production evidence on 2026-07-11 showed that path hung with discarded stdout and never reached the interactive TUI.
+`GROK_TURNEND_GUARD_ACTIVE` remains only as a legacy loop-guard env.
 Project-local Grok hooks require folder trust, verified with launch-time `--trust`; if the primary firstmate checkout is not trusted for Grok hooks, this primary guard fails open and `fm-guard.sh` remains the next-command alarm.
-Grok's primary watcher protocol is Claude-shaped background-notify around `bin/fm-watch-arm.sh`; the passive Stop hook is only a backstop for blind turn ends.
+Grok's primary watcher protocol is Claude-shaped background-notify around `bin/fm-watch-arm.sh`; the passive Stop ensure is only a total-outage backstop, not a substitute for the interactive arm.
+
+**Primary re-arm shape (mandatory standalone tool call).**
+When re-arming after a wake or repair, the shell tool call must be arm-only.
+Blessed contents only: optional `export FM_HOME=...`, optional `cd` into the home, optional `[ -f config/x-mode.env ] && . config/x-mode.env` (or the effective absolute path), then a sole final `exec bin/fm-watch-arm.sh` (or `bin/fm-watch-arm.sh`), with `background: true`.
+Do not bundle peeks, drains, `rg`, diagnostics, or other commands into the same string - the PreToolUse seatbelt denies those as `watcher-bundled`.
+Do not wrap the arm in `if`/`for`/`case` either; real unquoted protected paths under unsupported compound grammar still deny.
