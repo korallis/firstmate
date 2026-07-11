@@ -88,10 +88,18 @@ if [ "$watcher_fresh" = false ]; then
     --queue-pending "$queue_arg" \
     --repair-line 2>/dev/null || printf '%s\n' 'Resume supervision according to the session-start operating block.')
   rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  gap_ts=
+  if [ -s "$STATE/.supervision-gap" ]; then
+    # First line is an ISO timestamp written by fm-turnend-guard-grok.sh.
+    gap_ts=$(head -n1 "$STATE/.supervision-gap" 2>/dev/null || true)
+  fi
   {
     printf '●%s\n' "$rule"
     printf '●  WATCHER DOWN - SUPERVISION IS OFF\n'
     printf '●  %s task(s) in flight, but no watcher has a fresh beacon (last beat: %s, grace %ss).\n' "$in_flight" "$beacon_desc" "$GRACE"
+    if [ -n "$gap_ts" ]; then
+      printf '●  state/.supervision-gap present (since %s) - a prior primary turn ended blind; see docs/turnend-guard.md.\n' "$gap_ts"
+    fi
     if [ "$READ_ONLY" -eq 1 ]; then
       printf '●  This read-only session should report the lapse, not repair it.\n'
     else
