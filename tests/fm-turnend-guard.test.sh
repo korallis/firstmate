@@ -542,6 +542,27 @@ EOF
   pass "fm-turnend-guard-grok: prefers FM_HOME for gap marker and ensure state"
 }
 
+test_grok_adapter_writes_gap_marker_without_wake_lib() {
+  local dir home out status gap
+  dir=$(make_primary_dir "$TMP_ROOT/grok-adapter-no-wake-lib")
+  home="$TMP_ROOT/grok-adapter-no-wake-lib-home"
+  mkdir -p "$home/state" "$home/bin"
+  # Ops-home bin has fm-watch.sh but NO fm-wake-lib.sh next to it: the lib
+  # source fails, and the durable gap record must already be on disk by then.
+  cat > "$home/bin/fm-watch.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$home/bin/fm-watch.sh"
+  : > "$home/state/task1.meta"
+  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | FM_HOME="$home" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  expect_code 0 "$status" "grok adapter must fail open when fm-wake-lib.sh is missing next to the chosen watch script"
+  [ -z "$out" ] || fail "grok adapter printed output on missing-wake-lib path: $out"
+  gap=$(cat "$home/state/.supervision-gap" 2>/dev/null || true)
+  [ -n "$gap" ] || fail "gap marker must be written before the wake-lib source so a broken lib cannot lose it"
+  pass "fm-turnend-guard-grok: durable gap marker survives a missing fm-wake-lib.sh"
+}
+
 test_settings_hook_uses_claude_project_dir() {
   local settings command
   settings="$ROOT/.claude/settings.json"
@@ -860,6 +881,7 @@ test_grok_adapter_ensure_lock_loser_keeps_lock_and_stale_lock_is_stolen
 test_grok_adapter_skips_ensure_when_watcher_already_healthy
 test_grok_adapter_loop_guard_skips_ensure
 test_grok_adapter_prefers_fm_home_for_gap_state
+test_grok_adapter_writes_gap_marker_without_wake_lib
 test_settings_hook_uses_claude_project_dir
 test_codex_hook_invokes_shared_guard
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root

@@ -112,7 +112,10 @@ test_guard_warnings() {
   printf 'project=x\n' > "$state/task.meta"
   printf 'project=y\n' > "$state/task2.meta"
   append_wake "$state" heartbeat heartbeat heartbeat || fail "guard heartbeat append failed"
+  printf '2026-07-11T00:00:00Z\nblind turn\n' > "$state/.supervision-gap"
   FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
+  grep -F 'state/.supervision-gap present (since 2026-07-11T00:00:00Z)' "$err" >/dev/null || fail "watcher-down banner did not surface the blind-turn gap marker"
+  [ -e "$state/.supervision-gap" ] || fail "guard must keep the gap marker while the watcher is still down"
   first=$(grep -v '^[[:space:]]*$' "$err" | head -1)
   case "$first" in
     '●'*) ;;
@@ -149,9 +152,15 @@ test_guard_warnings() {
   touch "$state/.last-watcher-beat"
   # Non-git FM_ROOT keeps the worktree-tangle check inert so "fresh watcher ->
   # total silence" stays a pure assertion about watcher state.
+  # A leftover blind-turn gap marker is retired on the healthy path, but never
+  # by a read-only advisory run.
+  printf '2026-07-11T00:00:00Z\nblind turn\n' > "$state/.supervision-gap"
+  FM_GUARD_READ_ONLY=1 FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=300 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "read-only guard failed"
+  [ -e "$state/.supervision-gap" ] || fail "read-only guard must not retire the gap marker"
   FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=300 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
   [ ! -s "$err" ] || fail "guard warned with a fresh watcher and no queued wakes: $(cat "$err")"
-  pass "guard banner leads when down with pending wakes (re-arm-after-drain) and stays silent when fresh"
+  [ ! -e "$state/.supervision-gap" ] || fail "guard must retire the gap marker once the watcher beacon is fresh again"
+  pass "guard banner leads when down with pending wakes (re-arm-after-drain) and stays silent when fresh; gap marker retired only on the healthy non-read-only path"
 }
 
 test_lock_single_winner_under_concurrency() {

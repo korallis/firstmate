@@ -125,7 +125,8 @@ This backstop mirrors the protected-execution fail-closed rule and covers forms 
 It is gated on the grammar being unsupported: in grammar the classifier does model, command-position analysis is authoritative, so data mentions such as `echo 'pkill -f fm-watch'` and a loop that only names the watcher without a kill verb such as `for f in 1; do echo fm-watch; done` remain allowed.
 
 For protected executions under the same unsupported grammar, fail-closed uses a quote-aware scan (`rawMentionsProtectedExecution` in `bin/fm-arm-command-policy.mjs`), not a whole-source mention scan.
-Quoted regions and `--command` / `--command=` flag arguments are stripped first, then only unquoted command-position-shaped `fm-watch*.sh` paths deny.
+Quoted regions and `--command` / `--command=` flag arguments are stripped first, then only command-position-shaped `fm-watch*.sh` paths deny.
+A quoted region is stripped as data only when it is not itself in command position: a protected mention quoted right after a separator or an `if`/`for`/`do`-style keyword (such as `do "bin/fm-watch-arm.sh" & done`) still executes in bash, so it is kept visible to the scan and denies.
 Real unquoted bodies such as `if true; then bin/fm-watch-arm.sh; fi` still deny as `unclassifiable-protected-command`.
 Data-only mentions that previously false-positive denied Grok primary diagnostics (2026-07-11) are allowed, including `for c in "bin/fm-watch-arm.sh"; do echo; done` and `rg -n 'bin/fm-watch-arm.sh' docs`.
 

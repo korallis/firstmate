@@ -237,6 +237,13 @@ test_direct_policy_contract() {
   # single-quoted region and swallow an unquoted protected execution between them.
   assert_policy direct-unsupported-quote-mispair $'deny\tunclassifiable-protected-command' "for x in 1; do echo \"don't\"; done && for y in 1; do bin/fm-watch-arm.sh & done && echo \"won't\""
   assert_policy direct-unsupported-apostrophe-data allow "for x in 1; do echo \"don't run bin/fm-watch-arm.sh\"; done"
+  # A quoted protected path in command position still executes in bash; the
+  # quote-aware scan must keep denying it under unsupported grammar even though
+  # quoted data mentions are allowed (quoted-exec bypass, 2026-07-11 review).
+  assert_policy direct-unsupported-quoted-exec $'deny\tunclassifiable-protected-command' 'for i in 1; do "bin/fm-watch-arm.sh" & done'
+  assert_policy direct-unsupported-quoted-expanded-exec $'deny\tunclassifiable-protected-command' 'if true; then "$FM_HOME/bin/fm-watch-arm.sh"; fi'
+  assert_policy direct-unsupported-single-quoted-exec $'deny\tunclassifiable-protected-command' "while true; do 'bin/fm-watch.sh'; done"
+  assert_policy direct-unsupported-command-flag-quoted allow 'foo --command "bin/fm-watch-arm.sh" && for i in 1; do :; done'
   assert_policy direct-constructed-payload $'deny\twatcher-nested' "WATCHER='bin/fm-watch-arm.sh &'; bash -lc \"\$WATCHER\""
   assert_policy direct-parameter-export allow 'export FM_HOME=${HOME}; bin/fm-watch-checkpoint.sh --seconds 180'
   assert_policy direct-expanded-arm-blessed allow '$FM_HOME/bin/fm-watch-arm.sh'

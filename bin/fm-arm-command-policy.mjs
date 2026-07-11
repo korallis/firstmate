@@ -39,12 +39,36 @@ function rawMentionsProtected(command) {
 
 // Quote/flag-aware scan for unsupported-grammar fail-closed.
 // Used only when the tokenizer cannot model if/for/case bodies: deny real
-// unquoted protected executions, but allow data-only mentions (quoted strings,
+// protected executions, but allow data-only mentions (quoted strings,
 // --command fixtures, rg/doc probes) that previously blocked the Grok primary
-// on almost every diagnostic shell call (2026-07-11).
+// on almost every diagnostic shell call (2026-07-11). A quoted word in command
+// position still executes in bash, so a protected mention quoted at command
+// position (after a separator or an if/for/do-style keyword) is kept visible
+// to the execution scan instead of being stripped as data.
+const COMMAND_POSITION_WORDS = new Set([
+  "!", "command", "do", "elif", "else", "env", "eval", "exec", "gtimeout",
+  "if", "nohup", "sudo", "then", "time", "timeout", "until", "while", "xargs",
+]);
+
+function quotedProtectedMention(content) {
+  return /fm-watch(?:-(?:arm|checkpoint))?\.sh\b/.test(content);
+}
+
+function opensCommandPosition(prefix) {
+  const wordPrefix = prefix.match(/[^\s;&|()`{}]*$/)[0];
+  if (wordPrefix) return opensCommandPosition(prefix.slice(0, prefix.length - wordPrefix.length));
+  const trimmed = prefix.replace(/\s+$/, "");
+  if (trimmed === "" || /[;&|()`{}]$/.test(trimmed)) return true;
+  if (/\n/.test(prefix.slice(trimmed.length))) return true;
+  return COMMAND_POSITION_WORDS.has(trimmed.match(/[^\s;&|()`{}]*$/)[0]);
+}
+
 function stripQuotedRegions(source) {
   let out = "";
   let i = 0;
+  const emit = (content, placeholder) => {
+    out += quotedProtectedMention(content) && opensCommandPosition(out) ? content : placeholder;
+  };
   while (i < source.length) {
     const char = source[i];
     if (char === "\\") {
@@ -56,14 +80,14 @@ function stripQuotedRegions(source) {
       let end = i + 2;
       while (end < source.length && source[end] !== "'") end += source[end] === "\\" ? 2 : 1;
       if (end >= source.length) return out + source.slice(i);
-      out += "''";
+      emit(source.slice(i + 2, end), "''");
       i = end + 1;
       continue;
     }
     if (char === "'") {
       const end = source.indexOf("'", i + 1);
       if (end === -1) return out + source.slice(i);
-      out += "''";
+      emit(source.slice(i + 1, end), "''");
       i = end + 1;
       continue;
     }
@@ -71,7 +95,7 @@ function stripQuotedRegions(source) {
       let end = i + 1;
       while (end < source.length && source[end] !== '"') end += source[end] === "\\" ? 2 : 1;
       if (end >= source.length) return out + source.slice(i);
-      out += '""';
+      emit(source.slice(i + 1, end), '""');
       i = end + 1;
       continue;
     }
@@ -898,10 +922,12 @@ function analyzeProgram(command, context, depth = 0) {
   if (unclassifiableProtected) unsupported = true;
   const broadKillFound = broadKill || (unsupported && rawMentionsBroadKill(command));
   // Unsupported if/for/case grammar: fail closed when analysis found a protected
-  // execution, OR when unquoted protected paths remain after stripping quotes
-  // and --command args (covers if/for bodies the tokenizer does not model).
-  // Quoted/data-only mentions must NOT deny - that false-positive blocked Grok
-  // primary diagnostics and recovery loops constantly (2026-07-11).
+  // execution, OR when command-position protected paths remain after stripping
+  // quotes and --command args (covers if/for bodies the tokenizer does not
+  // model). Quoted mentions outside command position are data and must NOT
+  // deny - that false-positive blocked Grok primary diagnostics and recovery
+  // loops constantly (2026-07-11) - but a quoted path in command position
+  // still executes and stays denied.
   if (unsupported && (protectedFound || broadKillFound || rawMentionsProtectedExecution(command))) {
     return { error: "unsupported compound grammar", protectedFound: true, broadKill: broadKillFound, pgrepWatcher, watcherPids: activeContext.watcherPids, program, nodeInfos };
   }

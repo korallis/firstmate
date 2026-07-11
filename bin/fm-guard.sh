@@ -68,6 +68,13 @@ fm_supervision_status "$STATE" "$GRACE"
 in_flight=$FM_SUP_IN_FLIGHT
 watcher_fresh=$FM_SUP_WATCHER_FRESH
 beacon_desc=$FM_SUP_BEACON_DESC
+
+# A fresh beacon means the blind-turn gap recorded by fm-turnend-guard-grok.sh
+# has been repaired: retire the marker so a future watcher-down banner does not
+# report a long-settled incident as current.
+if [ "$READ_ONLY" -eq 0 ] && [ "$watcher_fresh" = true ] && [ -e "$STATE/.supervision-gap" ]; then
+  rm -f "$STATE/.supervision-gap" 2>/dev/null || true
+fi
 [ "$in_flight" -eq 0 ] && exit 0
 
 [ -s "$FM_WAKE_QUEUE" ] && queue_pending=true

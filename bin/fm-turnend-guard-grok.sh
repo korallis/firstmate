@@ -59,6 +59,13 @@ FM_HOME_EFF="${FM_HOME:-$ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME_EFF/state}"
 mkdir -p "$STATE" 2>/dev/null || true
 
+# Durable gap record first: it needs nothing beyond the state dir, so a broken
+# lib source below must not lose it.
+{
+  date -u +%Y-%m-%dT%H:%M:%SZ
+  printf '%s\n' "$REASON"
+} >"$STATE/.supervision-gap" 2>/dev/null || true
+
 # Prefer ops-home bin when present so watcher matches the live fleet scripts.
 WATCH="$ROOT/bin/fm-watch.sh"
 [ -x "$FM_HOME_EFF/bin/fm-watch.sh" ] && WATCH="$FM_HOME_EFF/bin/fm-watch.sh"
@@ -69,11 +76,6 @@ SCRIPT_DIR="$(cd "$(dirname "$WATCH")" && pwd)"
 
 GRACE=${FM_GUARD_GRACE:-300}
 
-{
-  date -u +%Y-%m-%dT%H:%M:%SZ
-  printf '%s\n' "$REASON"
-} >"$STATE/.supervision-gap" 2>/dev/null || true
-
 if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME_EFF" 2>/dev/null; then
   exit 0
 fi
@@ -81,15 +83,24 @@ fi
 # Single-flight ensure: never stampede concurrent Stop hooks. A holder
 # SIGKILLed mid-hook orphans the lock; steal it once it is older than any
 # legitimate hook run (the confirm loop below holds it for at most ~5s).
+# The steal is an atomic rename so two racers can never both claim it.
 LOCK="$STATE/.turnend-watch-ensure.lock"
 if ! mkdir "$LOCK" 2>/dev/null; then
   [ "$(fm_path_age "$LOCK")" -ge 60 ] || exit 0
-  rmdir "$LOCK" 2>/dev/null || true
+  STALE="$LOCK.stale.$$"
+  mv "$LOCK" "$STALE" 2>/dev/null || exit 0
+  rmdir "$STALE" 2>/dev/null || true
   mkdir "$LOCK" 2>/dev/null || exit 0
 fi
 ENSURE_LOCK="$LOCK"
 
+# Size-capped like state/.watch-triage.log so repeated ensures cannot grow it
+# without bound.
 LOG="$STATE/.turnend-watch-ensure.log"
+if [ "$(wc -c 2>/dev/null <"$LOG" || echo 0)" -ge "${FM_TURNEND_ENSURE_LOG_MAX_BYTES:-262144}" ]; then
+  tail -n 500 "$LOG" >"$LOG.tmp" 2>/dev/null && mv -f "$LOG.tmp" "$LOG" 2>/dev/null
+  rm -f "$LOG.tmp" 2>/dev/null || true
+fi
 (
   export FM_HOME="$FM_HOME_EFF"
   export FM_STATE_OVERRIDE="$STATE"
