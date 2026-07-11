@@ -38,6 +38,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 ERR=$(mktemp "${TMPDIR:-/tmp}/fm-turnend-grok.XXXXXX") || exit 0
+# shellcheck disable=SC2329 # Invoked by the trap handler below.
 cleanup() {
   rm -f "$ERR" 2>/dev/null || true
   if [ -n "${ENSURE_LOCK:-}" ]; then
