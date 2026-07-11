@@ -106,6 +106,7 @@ state/               volatile runtime signals; gitignored
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
   .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak   watcher internals; never touch
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
+  .supervision-gap .turnend-watch-ensure.*   grok primary turn-end guard internals: durable blind-turn gap marker plus watcher-ensure lock and log (docs/turnend-guard.md); never touch
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
 .no-mistakes/        local validation state and evidence; gitignored
@@ -613,7 +614,7 @@ If a crewmate sent to work firstmate-on-itself branches or commits in the primar
 Only a named non-default branch checked out in the primary alarms: detached HEAD (the legitimate resting state of crewmate worktrees and secondmate homes) and the default branch never do.
 The same assertion runs at session start as the bootstrap `TANGLE:` line (handled via `bootstrap-diagnostics`), and two upstream guards prevent the tangle: `fm-spawn`'s isolated-worktree assertion and the ship brief's opening isolation check (section 11).
 
-On every verified primary harness, "no turn ends blind" has a structural backstop beyond the pull-based banner: `bin/fm-turnend-guard.sh` blocks the turn end (or forces one bounded follow-up on passive harnesses) when tasks are in flight without a live identity-matched watcher lock and fresh beacon, fires only in the actual primary checkout, and stays silent when supervision is healthy.
+On every verified primary harness, "no turn ends blind" has a structural backstop beyond the pull-based banner: `bin/fm-turnend-guard.sh` blocks the turn end (or, on passive harnesses, forces one bounded follow-up - Grok's adapter instead writes a gap marker and mechanically ensures the detached watcher) when tasks are in flight without a live identity-matched watcher lock and fresh beacon, fires only in the actual primary checkout, and stays silent when supervision is healthy.
 `docs/turnend-guard.md` owns the per-harness hook mechanisms, empirical validation, scoping details, and documented fail-open tradeoffs.
 Watcher liveness is harness-aware.
 Do not assume one primary harness can use another harness's foreground or background shape.
