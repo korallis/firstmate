@@ -126,6 +126,17 @@ build_old_bin() {  # <name> -> echoes root dir (root/bin/<script> is the entry p
     git -C "$ROOT" show "$BASE_REF:bin/$f" > "$bin/$f"
     chmod +x "$bin/$f"
   done
+  # Any other bin/*.sh present at BASE_REF but not placed above (e.g. a lib
+  # added on main after this branch forked, which the BASE_REF scripts source
+  # but the current tree lacks) is extracted from BASE_REF so the old scripts'
+  # `. "$SCRIPT_DIR/..."` lines keep resolving.
+  while IFS= read -r f; do
+    f=${f#bin/}
+    case "$f" in *.sh) ;; *) continue ;; esac
+    [ -e "$bin/$f" ] && continue
+    git -C "$ROOT" show "$BASE_REF:bin/$f" > "$bin/$f"
+    chmod +x "$bin/$f"
+  done < <(git -C "$ROOT" ls-tree --name-only "$BASE_REF" bin/)
   printf '%s\n' "$root"
 }
 
