@@ -122,6 +122,7 @@ matrix_case D55 deny 'while true; do pkill -f fm-watch; done'
 matrix_case D56 deny 'for x in 1; do pkill -f fm-watch; done'
 matrix_case D57 deny 'case x in x) pkill -f fm-watch ;; esac'
 matrix_case D58 deny 'until false; do kill $(pgrep -f fm-watch); done'
+matrix_case D59 deny "for x in 1; do echo \"don't\"; done && for y in 1; do bin/fm-watch-arm.sh & done && echo \"won't\""
 
 matrix_case E01 allow "bin/fm-watch-checkpoint.sh --seconds '180;still-one-arg'"
 matrix_case E02 allow "bin/fm-watch-checkpoint.sh --label 'fm-watch-arm.sh; literal argument'"
@@ -140,6 +141,7 @@ matrix_case E14 allow '$FM_HOME/bin/fm-teardown.sh &'
 matrix_case E15 allow '$FM_HOME/bin/fm-watch-arm.sh'
 matrix_case E16 allow '~/firstmate/bin/fm-watch-checkpoint.sh --seconds 180'
 matrix_case E17 allow 'for f in 1; do echo fm-watch; done'
+matrix_case E18 allow "for x in 1; do echo \"don't run bin/fm-watch-arm.sh\"; done && echo \"won't\""
 
 MATRIX_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-arm-policy-matrix.XXXXXX")
 FM_TEST_CLEANUP_DIRS+=("$MATRIX_TMP")
@@ -231,6 +233,10 @@ test_direct_policy_contract() {
   assert_policy direct-unsupported-quoted-data allow 'for c in "bin/fm-watch-arm.sh"; do echo; done'
   assert_policy direct-unsupported-single-quoted-data allow "for c in 'bin/fm-watch-checkpoint.sh'; do :; done"
   assert_policy direct-unsupported-rg-docs allow "rg -n 'bin/fm-watch-arm.sh' docs"
+  # Apostrophes inside distinct double-quoted strings must not pair as a
+  # single-quoted region and swallow an unquoted protected execution between them.
+  assert_policy direct-unsupported-quote-mispair $'deny\tunclassifiable-protected-command' "for x in 1; do echo \"don't\"; done && for y in 1; do bin/fm-watch-arm.sh & done && echo \"won't\""
+  assert_policy direct-unsupported-apostrophe-data allow "for x in 1; do echo \"don't run bin/fm-watch-arm.sh\"; done"
   assert_policy direct-constructed-payload $'deny\twatcher-nested' "WATCHER='bin/fm-watch-arm.sh &'; bash -lc \"\$WATCHER\""
   assert_policy direct-parameter-export allow 'export FM_HOME=${HOME}; bin/fm-watch-checkpoint.sh --seconds 180'
   assert_policy direct-expanded-arm-blessed allow '$FM_HOME/bin/fm-watch-arm.sh'

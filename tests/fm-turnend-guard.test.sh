@@ -421,6 +421,38 @@ EOF
   pass "fm-turnend-guard-grok: writes gap marker and ensures watcher; never spawns grok --resume"
 }
 
+test_grok_adapter_ensure_lock_loser_keeps_lock_and_stale_lock_is_stolen() {
+  local dir watch_log out status lock i
+  dir=$(make_primary_dir "$TMP_ROOT/grok-adapter-lock")
+  : > "$dir/state/task1.meta"
+  watch_log="$TMP_ROOT/grok-adapter-lock-watch.log"
+  cat > "$dir/bin/fm-watch.sh" <<EOF
+#!/usr/bin/env bash
+printf 'watch-started\n' >> "$watch_log"
+EOF
+  chmod +x "$dir/bin/fm-watch.sh"
+  lock="$dir/state/.turnend-watch-ensure.lock"
+  mkdir -p "$lock"
+  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | env -u FM_HOME -u FM_STATE_OVERRIDE GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  expect_code 0 "$status" "grok adapter must exit 0 when another hook holds a fresh ensure lock"
+  [ -z "$out" ] || fail "grok adapter printed output on lock-lost path: $out"
+  [ -d "$lock" ] || fail "a losing hook must not remove the holder's fresh ensure lock"
+  [ ! -e "$watch_log" ] || fail "a losing hook must not start the watcher"
+  touch -t 202001010000 "$lock"
+  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | env -u FM_HOME -u FM_STATE_OVERRIDE GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  expect_code 0 "$status" "grok adapter must exit 0 after stealing a stale ensure lock"
+  [ -z "$out" ] || fail "grok adapter printed output on stale-steal path: $out"
+  i=0
+  while [ "$i" -lt 25 ]; do
+    [ -s "$watch_log" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -s "$watch_log" ] || fail "a stale ensure lock must be stolen so the watcher ensure still runs"
+  [ ! -d "$lock" ] || fail "the hook must release the ensure lock it owns on exit"
+  pass "fm-turnend-guard-grok: fresh ensure lock survives a losing racer; stale lock is stolen"
+}
+
 test_grok_adapter_skips_ensure_when_watcher_already_healthy() {
   local dir fakebin grok_log watch_log out status pid identity
   dir=$(make_primary_dir "$TMP_ROOT/grok-adapter-healthy")
@@ -824,6 +856,7 @@ test_hook_silent_without_jq
 test_hook_silent_without_stdin
 test_hook_runs_fast
 test_grok_adapter_ensures_watcher_when_unhealthy
+test_grok_adapter_ensure_lock_loser_keeps_lock_and_stale_lock_is_stolen
 test_grok_adapter_skips_ensure_when_watcher_already_healthy
 test_grok_adapter_loop_guard_skips_ensure
 test_grok_adapter_prefers_fm_home_for_gap_state

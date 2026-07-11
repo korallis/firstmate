@@ -43,10 +43,42 @@ function rawMentionsProtected(command) {
 // --command fixtures, rg/doc probes) that previously blocked the Grok primary
 // on almost every diagnostic shell call (2026-07-11).
 function stripQuotedRegions(source) {
-  return source
-    .replace(/\$'(?:\\'|[^'])*'/g, "''")
-    .replace(/'[^']*'/g, "''")
-    .replace(/"(?:\\.|[^"\\])*"/g, '""');
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const char = source[i];
+    if (char === "\\") {
+      out += source.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+    if (source.startsWith("$'", i)) {
+      let end = i + 2;
+      while (end < source.length && source[end] !== "'") end += source[end] === "\\" ? 2 : 1;
+      if (end >= source.length) return out + source.slice(i);
+      out += "''";
+      i = end + 1;
+      continue;
+    }
+    if (char === "'") {
+      const end = source.indexOf("'", i + 1);
+      if (end === -1) return out + source.slice(i);
+      out += "''";
+      i = end + 1;
+      continue;
+    }
+    if (char === '"') {
+      let end = i + 1;
+      while (end < source.length && source[end] !== '"') end += source[end] === "\\" ? 2 : 1;
+      if (end >= source.length) return out + source.slice(i);
+      out += '""';
+      i = end + 1;
+      continue;
+    }
+    out += char;
+    i += 1;
+  }
+  return out;
 }
 
 function stripCommandFlagArgs(source) {

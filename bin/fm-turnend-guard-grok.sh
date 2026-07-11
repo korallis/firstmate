@@ -77,11 +77,16 @@ if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME_EFF" 2>/dev/null; the
   exit 0
 fi
 
-# Single-flight ensure: never stampede concurrent Stop hooks.
-ENSURE_LOCK="$STATE/.turnend-watch-ensure.lock"
-if ! mkdir "$ENSURE_LOCK" 2>/dev/null; then
-  exit 0
+# Single-flight ensure: never stampede concurrent Stop hooks. A holder
+# SIGKILLed mid-hook orphans the lock; steal it once it is older than any
+# legitimate hook run (the confirm loop below holds it for at most ~5s).
+LOCK="$STATE/.turnend-watch-ensure.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  [ "$(fm_path_age "$LOCK")" -ge 60 ] || exit 0
+  rmdir "$LOCK" 2>/dev/null || true
+  mkdir "$LOCK" 2>/dev/null || exit 0
 fi
+ENSURE_LOCK="$LOCK"
 
 LOG="$STATE/.turnend-watch-ensure.log"
 (
