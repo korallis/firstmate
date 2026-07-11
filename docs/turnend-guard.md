@@ -42,6 +42,7 @@ All verified primary harnesses have a tracked integration:
 - `pi`: `.pi/extensions/fm-primary-turnend-guard.ts` listens for `agent_settled`, marks the extension version loaded for session-start checks, runs the shared guard once per logical agent run, and uses `pi.sendUserMessage(..., { deliverAs: "followUp" })` to force one follow-up prompt when the guard returns 2.
 - `grok`: `.grok/hooks/fm-primary-turnend-guard.json` registers a `Stop` hook that invokes `bin/fm-turnend-guard-grok.sh`.
   The adapter runs the shared guard and, when it returns 2, writes `state/.supervision-gap` under the operational home (`FM_HOME` preferred) and mechanically ensures this home's detached `bin/fm-watch.sh` singleton is running.
+  The ensure is single-flight under `state/.turnend-watch-ensure.lock` (a stale holder older than 60s is stolen via atomic rename), and the detached watcher's output appends to `state/.turnend-watch-ensure.log`, size-capped by `FM_TURNEND_ENSURE_LOG_MAX_BYTES` (default 262144).
   `bin/fm-guard.sh` surfaces the gap marker in its watcher-down banner and retires it once it next confirms a fresh watcher beacon (never in read-only advisory mode), so the marker records the current incident rather than one long since repaired.
   It never spawns headless `grok --resume` (empirical failure 2026-07-11: hung zombies with discarded stdout that never reached the interactive TUI).
   `GROK_TURNEND_GUARD_ACTIVE` is kept only as a legacy loop-guard so any older nested resume dies immediately.
