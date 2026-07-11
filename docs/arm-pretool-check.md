@@ -126,7 +126,8 @@ It is gated on the grammar being unsupported: in grammar the classifier does mod
 
 For protected executions under the same unsupported grammar, fail-closed uses a quote-aware scan (`rawMentionsProtectedExecution` in `bin/fm-arm-command-policy.mjs`), not a whole-source mention scan.
 Quoted regions and `--command` / `--command=` flag arguments are stripped first, then only command-position-shaped `fm-watch*.sh` paths deny.
-A quoted region is stripped as data only when it is not itself in command position: a protected mention quoted right after a separator or an `if`/`for`/`do`-style keyword (such as `do "bin/fm-watch-arm.sh" & done`) still executes in bash, so it is kept visible to the scan and denies.
+The `--command` stripping is scoped to this seatbelt's own tools: only a flag argument following an `fm-arm-pretool-check.sh` or `fm-arm-command-policy.mjs` invocation is treated as a fixture, so `su root --command bin/fm-watch-arm.sh` under unsupported grammar still denies while `bin/fm-arm-pretool-check.sh --command bin/fm-watch-arm.sh` stays allowed.
+A quoted region is stripped as data only when it is not itself in command position: a protected mention quoted right after a separator, an `if`/`for`/`do`-style keyword (such as `do "bin/fm-watch-arm.sh" & done`), or an `sh`/`bash`/`zsh` `-c`-bearing flag cluster (optionally followed by `--`, e.g. `bash -c "bin/fm-watch-arm.sh"` or `sh -lc "..."`) still executes in bash, so it is kept visible to the scan and denies; the same protected arg after a non-interpreter `-c` flag such as `grep -c "bin/fm-watch-arm.sh" docs` is data and stays allowed.
 Real unquoted bodies such as `if true; then bin/fm-watch-arm.sh; fi` still deny as `unclassifiable-protected-command`.
 Data-only mentions that previously false-positive denied Grok primary diagnostics (2026-07-11) are allowed, including `for c in "bin/fm-watch-arm.sh"; do echo; done` and `rg -n 'bin/fm-watch-arm.sh' docs`.
 
