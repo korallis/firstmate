@@ -244,6 +244,18 @@ test_direct_policy_contract() {
   assert_policy direct-unsupported-quoted-expanded-exec $'deny\tunclassifiable-protected-command' 'if true; then "$FM_HOME/bin/fm-watch-arm.sh"; fi'
   assert_policy direct-unsupported-single-quoted-exec $'deny\tunclassifiable-protected-command' "while true; do 'bin/fm-watch.sh'; done"
   assert_policy direct-unsupported-command-flag-quoted allow 'foo --command "bin/fm-watch-arm.sh" && for i in 1; do :; done'
+  # An interpreter -c payload executes its quoted string, so a protected path
+  # quoted after sh/bash/zsh -c must stay denied even inside unsupported
+  # grammar; the same protected arg after a non-interpreter -c flag is data.
+  assert_policy direct-unsupported-interpreter-c-quoted $'deny\tunclassifiable-protected-command' 'if true; then bash -c "bin/fm-watch-arm.sh"; fi'
+  assert_policy direct-unsupported-interpreter-lc-quoted $'deny\tunclassifiable-protected-command' 'if true; then sh -lc "bin/fm-watch-arm.sh"; fi'
+  assert_policy direct-unsupported-interpreter-c-dashdash $'deny\tunclassifiable-protected-command' 'if true; then bash -c -- "bin/fm-watch-arm.sh"; fi'
+  assert_policy direct-unsupported-grep-c-data allow 'if true; then grep -c "bin/fm-watch-arm.sh" docs; fi'
+  # --command args are stripped as fixtures only for this seatbelt's own tools;
+  # any other tool executing its --command argument stays denied.
+  assert_policy direct-unsupported-foreign-command-flag $'deny\tunclassifiable-protected-command' 'if true; then su root --command bin/fm-watch-arm.sh; fi'
+  assert_policy direct-unsupported-pretool-command-fixture allow 'if true; then bin/fm-arm-pretool-check.sh --command bin/fm-watch-arm.sh; fi'
+  assert_policy direct-unsupported-policy-command-fixture allow 'if true; then node bin/fm-arm-command-policy.mjs --command=bin/fm-watch-arm.sh; fi'
   assert_policy direct-constructed-payload $'deny\twatcher-nested' "WATCHER='bin/fm-watch-arm.sh &'; bash -lc \"\$WATCHER\""
   assert_policy direct-parameter-export allow 'export FM_HOME=${HOME}; bin/fm-watch-checkpoint.sh --seconds 180'
   assert_policy direct-expanded-arm-blessed allow '$FM_HOME/bin/fm-watch-arm.sh'

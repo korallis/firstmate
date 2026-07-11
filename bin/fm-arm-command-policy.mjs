@@ -60,7 +60,12 @@ function opensCommandPosition(prefix) {
   const trimmed = prefix.replace(/\s+$/, "");
   if (trimmed === "" || /[;&|()`{}]$/.test(trimmed)) return true;
   if (/\n/.test(prefix.slice(trimmed.length))) return true;
-  return COMMAND_POSITION_WORDS.has(trimmed.match(/[^\s;&|()`{}]*$/)[0]);
+  const words = trimmed.split(/[\s;&|()`{}]+/).filter(Boolean);
+  let last = words.length - 1;
+  if (words[last] === "--") last -= 1;
+  const lastWord = words[last] || "";
+  if (COMMAND_POSITION_WORDS.has(lastWord)) return true;
+  return /^-[A-Za-z]*c[A-Za-z]*$/.test(lastWord) && ["sh", "bash", "zsh"].includes(basename(words[last - 1] || ""));
 }
 
 function stripQuotedRegions(source) {
@@ -106,9 +111,10 @@ function stripQuotedRegions(source) {
 }
 
 function stripCommandFlagArgs(source) {
-  return source
-    .replace(/--command\s*=\s*\S+/g, "--command=_")
-    .replace(/--command\s+\S+/g, "--command _");
+  return source.replace(
+    /((?:\S*\/)?fm-arm-(?:pretool-check\.sh|command-policy\.mjs)[^;&|\n]*?--command(?:\s*=\s*|\s+))\S+/g,
+    "$1_",
+  );
 }
 
 function rawMentionsProtectedExecution(command) {
