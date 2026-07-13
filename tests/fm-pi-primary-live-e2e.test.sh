@@ -19,6 +19,18 @@ PROJECT="$LAB/project"
 HOME_DIR="$LAB/fmhome"
 PI_DIR="$LAB/pi-agent"
 PI_VERSION=$(pi --version)
+WORKFLOW_PACKAGE_DIR=${FM_PI_WORKFLOW_SUITE_DIR:-"$HOME/.pi/agent/npm/node_modules/@mediadatafusion/pi-workflow-suite"}
+WORKFLOW_EXTENSION="$WORKFLOW_PACKAGE_DIR/extensions/workflow-modes.ts"
+if [ ! -f "$WORKFLOW_EXTENSION" ] || [ ! -f "$WORKFLOW_PACKAGE_DIR/package.json" ]; then
+  echo "skip: installed @mediadatafusion/pi-workflow-suite package not found"
+  exit 0
+fi
+WORKFLOW_VERSION=$(node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(p.version)' "$WORKFLOW_PACKAGE_DIR/package.json")
+PI_AUTH_FILE=${FM_PI_AUTH_FILE:-"$HOME/.pi/agent/auth.json"}
+if [ ! -f "$PI_AUTH_FILE" ]; then
+  echo "skip: Pi auth file not found for live model calls"
+  exit 0
+fi
 
 fail() {
   printf 'not ok - %s\n' "$1" >&2
@@ -107,13 +119,16 @@ cp "$ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$PROJECT/.pi/extensions/fm-pri
 cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$PROJECT/.pi/extensions/fm-primary-turnend-guard.ts"
 cp "$ROOT/bin/fm-supervision-instructions.sh" "$PROJECT/bin/fm-supervision-instructions.sh"
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/config" "$PI_DIR"
+cp "$PI_AUTH_FILE" "$PI_DIR/auth.json"
+chmod 600 "$PI_DIR/auth.json"
 
 "$TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -c "$PROJECT" \
-  "env PI_CODING_AGENT_DIR='$PI_DIR' FM_HOME='$HOME_DIR' FM_ROOT_OVERRIDE='$PROJECT' FM_POLL=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=600 PI_OFFLINE=1 bash -lc 'printf \"%s\\n\" \"\$\$\" > \"\$FM_HOME/state/.lock\"; pi; rc=\$?; printf \"PI_EXIT=%s\\n\" \"\$rc\"; sleep 300'"
+  "env PI_CODING_AGENT_DIR='$PI_DIR' FM_HOME='$HOME_DIR' FM_ROOT_OVERRIDE='$PROJECT' FM_POLL=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=600 PI_OFFLINE=1 bash -lc 'printf \"%s\\n\" \"\$\$\" > \"\$FM_HOME/state/.lock\"; pi --no-extensions -e \"$PROJECT/.pi/extensions/fm-primary-pi-watch.ts\" -e \"$PROJECT/.pi/extensions/fm-primary-turnend-guard.ts\" -e \"$WORKFLOW_EXTENSION\"; rc=\$?; printf \"PI_EXIT=%s\\n\" \"\$rc\"; sleep 300'"
 
 wait_for_text "Trust project folder?" 40 || fail "Pi trust prompt did not appear"
 "$TMUX" -L "$SOCKET" send-keys -t "$SESSION" Enter
 wait_for_text "fm-primary-turnend-guard.ts" 60 || fail "Pi primary extensions did not load"
+wait_for_text "workflow-modes.ts" 60 || fail "Workflow Suite extension did not load"
 
 send_prompt "Use the bash tool to run printf PI_E2E_BASH_ONE. Then reply exactly BASH-ONE."
 wait_for_exact_line "BASH-ONE" || fail "first bash turn did not complete"
@@ -121,6 +136,10 @@ send_prompt "Use the read tool to read the first five lines of README.md. Then r
 wait_for_exact_line "READ-ONE" || fail "read turn did not complete"
 send_prompt "Use the bash tool to run printf PI_E2E_BASH_TWO. Then reply exactly BASH-TWO."
 wait_for_exact_line "BASH-TWO" || fail "second bash turn did not complete"
+sleep 2
+
+send_prompt "/reload"
+wait_for_text "Reloaded keybindings, extensions" 60 || fail "Pi /reload did not complete"
 
 : > "$HOME_DIR/state/pi-e2e.meta"
 send_prompt "Reply exactly GUARD-TRIGGER with no tools. When the guard follow-up arrives, use fm_watch_arm_pi and never use bash to arm supervision. After any FIRSTMATE WATCHER WAKE, run bin/fm-wake-drain.sh, read the signaled status, call fm_watch_arm_pi to re-arm, and finish exactly REARMED."
@@ -151,4 +170,4 @@ wait_for_text "PI_EXIT=0" 60 || fail "Pi did not exit cleanly"
 wait_pid_dead "$watcher_pid" || fail "watcher child survived clean Pi exit"
 wait_pid_dead "$arm_pid" || fail "arm child survived clean Pi exit"
 
-printf 'ok - Pi %s live E2E rendered the tool, guarded once, woke, re-armed, and cleaned up on exit\n' "$PI_VERSION"
+printf 'ok - Pi %s with Workflow Suite %s kept the watcher tool active after /reload, guarded once, woke, re-armed, and cleaned up on exit\n' "$PI_VERSION" "$WORKFLOW_VERSION"

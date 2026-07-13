@@ -26,3 +26,14 @@ Command run for the complete interactive regression: `FM_PI_LIVE_E2E=1 tests/fm-
 Observed output: `ok - Pi 0.80.5 live E2E rendered the tool, guarded once, woke, re-armed, and cleaned up on exit`.
 Command run for the installed-type contract: `tests/fm-pi-primary-types.test.sh`.
 Observed output: `ok - Pi primary extensions pass strict no-emit typecheck against Pi 0.80.5`.
+
+Reload and Workflow Suite verification on 2026-07-13 used Pi 0.80.6 with `@mediadatafusion/pi-workflow-suite` 0.0.25, an isolated `PI_CODING_AGENT_DIR`, an isolated `FM_HOME`, and a private tmux socket.
+Command run for the complete interactive regression: `FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh`.
+Observed output: `ok - Pi 0.80.6 with Workflow Suite 0.0.25 kept the watcher tool active after /reload, guarded once, woke, re-armed, and cleaned up on exit`.
+The test loaded the watcher extension before Workflow Suite, ran `/reload`, and proved the first post-reload model turn could call `fm_watch_arm_pi` without widening Workflow Suite's selected tool allowlist.
+Command run for deterministic lifecycle and restart coverage: `tests/fm-pi-watch-extension.test.sh`.
+Observed output included `ok - Pi watcher tool survives a late reload active-tool reset without widening the mode surface`, `ok - Pi suppresses restart exit 143 only after a fresh home-scoped replacement is verified`, and `ok - Pi keeps restart exit 143 actionable when no fresh home-scoped replacement exists`.
+The lifecycle fixture invalidated the captured extension API after resource discovery and would have thrown `extension ctx is stale` from any delayed `getActiveTools` or `setActiveTools` callback, proving the restoration does not rely on a post-handler timer.
+The restart fixture reproduced `watcher: FAILED - fm-watch-arm.sh exited 143` from the replaced arm and `watcher: started pid=222 (beacon fresh)` from its successor; exit 143 was suppressed only when the canonical home-scoped watcher-health predicate confirmed a different live watcher with a fresh beacon.
+Command run for the installed-type contract: `PATH="$HOME/.npm/_npx/9ca470fa61f45e06/node_modules/.bin:$PATH" tests/fm-pi-primary-types.test.sh`.
+Observed output: `ok - Pi primary extensions pass strict no-emit typecheck against Pi 0.80.6`.

@@ -22,11 +22,16 @@ const fmRoot = process.env.FM_ROOT_OVERRIDE || root;
 const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
 const config = process.env.FM_CONFIG_OVERRIDE || `${fmHome}/config`;
 const armScript = `${fmRoot}/bin/fm-watch-arm.sh`;
+const watchScript = `${fmRoot}/bin/fm-watch.sh`;
+const wakeLib = `${fmRoot}/bin/fm-wake-lib.sh`;
 const marker = `${state}/.pi-watch-extension-loaded`;
+const watcherToolName = "fm_watch_arm_pi";
 const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(extensionFile)).digest("hex")}`;
 
 let child: any = null;
 let seq = 0;
+let stoppingForSessionShutdown = false;
+let replacedWatcherPid = "";
 
 function parentPid(pid: string): string {
   const result = spawnSync("ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" });
@@ -75,6 +80,43 @@ function actionableLine(output: string): string {
   return lines.find((line) => /^(signal:|stale:|check:|heartbeat($|:))/.test(line)) || "";
 }
 
+function recordedWatcherPid(): string {
+  try {
+    return readFileSync(`${state}/.watch.lock/pid`, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function healthyHomeWatcherPid(): string {
+  const grace = process.env.FM_GUARD_GRACE || "300";
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      '. "$1"; if fm_watcher_healthy "$2" "$3" "$4" "$5"; then printf "%s" "$FM_WATCHER_HEALTHY_PID"; fi',
+      "_",
+      wakeLib,
+      state,
+      watchScript,
+      grace,
+      fmHome,
+    ],
+    { encoding: "utf8" },
+  );
+  return result.status === 0 ? result.stdout.trim() : "";
+}
+
+async function replacementWatcherIsHealthy(previousPid: string): Promise<boolean> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const healthyPid = healthyHomeWatcherPid();
+    if (healthyPid && healthyPid !== previousPid) return true;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  return false;
+}
+
 function failureLine(stdout: string, stderr: string, code: number | null): string {
   const combined = `${stdout}\n${stderr}`.trim();
   const healthy = combined.split(/\r?\n/).find((line) => /^watcher: healthy\b/.test(line));
@@ -86,6 +128,12 @@ function failureLine(stdout: string, stderr: string, code: number | null): strin
 }
 
 export default function (pi: ExtensionAPI) {
+  function keepWatcherToolActive(): void {
+    const activeTools = pi.getActiveTools();
+    if (activeTools.includes(watcherToolName)) return;
+    pi.setActiveTools([...activeTools, watcherToolName]);
+  }
+
   function stopArm(): void {
     if (child) child.kill("SIGTERM");
     child = null;
@@ -131,7 +179,10 @@ export default function (pi: ExtensionAPI) {
     child.on("close", async (code: number | null) => {
       child = null;
       const reason = actionableLine(`${stdout}\n${stderr}`);
-      const failure = reason ? "" : failureLine(stdout, stderr, code);
+      const expectedRestart = !reason && code === 143 && stoppingForSessionShutdown
+        ? await replacementWatcherIsHealthy(replacedWatcherPid)
+        : false;
+      const failure = reason || expectedRestart ? "" : failureLine(stdout, stderr, code);
       if (!reason && !failure) return;
       try {
         await sendWake(reason || failure);
@@ -153,7 +204,14 @@ export default function (pi: ExtensionAPI) {
   pi.on?.("session_start", () => {
     markLoaded();
   });
+  pi.on?.("resources_discover", () => {
+    // This event follows every startup/reload session_start, after mode extensions
+    // have selected their safety-scoped tool surface.
+    keepWatcherToolActive();
+  });
   pi.on?.("session_shutdown", () => {
+    stoppingForSessionShutdown = true;
+    replacedWatcherPid = recordedWatcherPid();
     stopArm();
     process.off("exit", cleanupOnProcessExit);
   });
@@ -167,7 +225,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool?.({
-    name: "fm_watch_arm_pi",
+    name: watcherToolName,
     label: "Arm firstmate watcher",
     description: "Arm Pi watcher supervision. Always use this tool instead of running bin/fm-watch-arm.sh through bash.",
     promptSnippet: "Arm firstmate watcher supervision through Pi without a foreground bash arm.",

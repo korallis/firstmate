@@ -193,6 +193,232 @@ EOF
   pass "Pi custom tool returns text content and structured details"
 }
 
+test_pi_tool_survives_late_reload_active_tool_reset() {
+  local repo home plugin out status
+  repo="$TMP_ROOT/pi-reload-active-root"
+  home="$TMP_ROOT/pi-reload-active-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" node --input-type=module 2>&1 <<'EOF'
+import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const handlers = new Map();
+let activeTools = ["read", "bash", "edit"];
+let apiActive = true;
+let tool = null;
+const pi = {
+  on(event, handler) {
+    const registered = handlers.get(event) ?? [];
+    registered.push(handler);
+    handlers.set(event, registered);
+  },
+  registerCommand() {},
+  registerTool(candidate) {
+    if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+    activeTools = [...new Set([...activeTools, candidate.name])];
+  },
+  getActiveTools() {
+    if (!apiActive) throw new Error("extension ctx is stale");
+    return [...activeTools];
+  },
+  getAllTools() {
+    if (!apiActive) throw new Error("extension ctx is stale");
+    return tool ? [tool] : [];
+  },
+  setActiveTools(names) {
+    if (!apiActive) throw new Error("extension ctx is stale");
+    activeTools = [...names];
+  },
+  sendUserMessage: async () => {},
+};
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+for (const handler of handlers.get("session_start") ?? []) {
+  await handler({ reason: "reload" }, {});
+}
+
+// Reproduce a later-loaded mode extension replacing the active safety allowlist.
+pi.setActiveTools(["read"]);
+if (activeTools.includes("fm_watch_arm_pi")) {
+  throw new Error("late active-tool reset did not reproduce the missing watcher tool");
+}
+for (const handler of handlers.get("resources_discover") ?? []) {
+  await handler({ reason: "reload" }, {});
+}
+if (JSON.stringify(activeTools) !== JSON.stringify(["read", "fm_watch_arm_pi"])) {
+  throw new Error(`watcher restoration changed the selected mode surface: ${JSON.stringify(activeTools)}`);
+}
+// Pi invalidates the captured extension API at shutdown. A post-handler timer
+// using getAllTools/setActiveTools would throw here, so prove no such callback remains.
+apiActive = false;
+await new Promise((resolve) => setTimeout(resolve, 50));
+if (!tool) throw new Error("Pi watch tool was not registered after reload");
+const result = await tool.execute("tool-call-after-reload", {}, undefined, undefined, {});
+if (!result.content[0]?.text.includes("started Pi extension arm child")) {
+  throw new Error(`watcher tool was not callable after reload: ${JSON.stringify(result)}`);
+}
+for (const handler of handlers.get("session_shutdown") ?? []) {
+  await handler({ reason: "quit" }, {});
+}
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi watcher tool must remain callable after a late reload active-tool reset"
+  [ -z "$out" ] || fail "Pi reload active-tool test printed output: $out"
+  pass "Pi watcher tool survives a late reload active-tool reset without widening the mode surface"
+}
+
+test_pi_reload_restart_sigterm_is_benign_only_after_verified_replacement() {
+  local repo home plugin out status
+  repo="$TMP_ROOT/pi-reload-restart-root"
+  home="$TMP_ROOT/pi-reload-restart-home"
+  mkdir -p "$repo/bin" "$home/state/.watch.lock" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-wake-lib.sh" <<'SH'
+fm_watcher_healthy() {
+  [ -f "${FM_REPLACEMENT_HEALTHY:?}" ] || return 1
+  FM_WATCHER_HEALTHY_PID=222
+}
+SH
+  : > "$repo/bin/fm-watch.sh"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ ! -f "${FM_FIRST_ARM_STARTED:?}" ]; then
+  : > "$FM_FIRST_ARM_STARTED"
+  trap 'exit 143' TERM INT
+  while :; do sleep 1; done
+fi
+printf 'watcher: started pid=222 (beacon fresh)\n' > "${FM_RESTART_LOG:?}"
+: > "${FM_REPLACEMENT_HEALTHY:?}"
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_FIRST_ARM_STARTED="$repo/first-arm" FM_REPLACEMENT_HEALTHY="$repo/replacement-healthy" FM_RESTART_LOG="$repo/restart.log" node --input-type=module 2>&1 <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+const prompts = [];
+function loadExtension() {
+  const handlers = new Map();
+  let tool = null;
+  const pi = {
+    on(event, handler) { handlers.set(event, handler); },
+    registerCommand() {},
+    registerTool(candidate) {
+      if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+    },
+    getActiveTools() { return ["read", "fm_watch_arm_pi"]; },
+    setActiveTools() {},
+    sendUserMessage: async (message) => { prompts.push(message); },
+  };
+  mod.default(pi);
+  return { handlers, getTool: () => tool };
+}
+
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+writeFileSync(`${process.env.FM_HOME}/state/.watch.lock/pid`, "111\n");
+const beforeReload = loadExtension();
+await beforeReload.getTool().execute("before-reload", {}, undefined, undefined, {});
+for (let i = 0; i < 50 && !existsSync(process.env.FM_FIRST_ARM_STARTED); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+if (!existsSync(process.env.FM_FIRST_ARM_STARTED)) throw new Error("initial arm did not start");
+await beforeReload.handlers.get("session_shutdown")?.({ reason: "reload" }, {});
+await new Promise((resolve) => setTimeout(resolve, 1200));
+const afterReload = loadExtension();
+const result = await afterReload.getTool().execute("after-reload", {}, undefined, undefined, {});
+if (!result.content[0]?.text.includes("started Pi extension arm child")) {
+  throw new Error(`replacement arm did not take ownership: ${JSON.stringify(result)}`);
+}
+for (let i = 0; i < 100 && !existsSync(process.env.FM_RESTART_LOG); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+if (!existsSync(process.env.FM_RESTART_LOG)) throw new Error("replacement arm did not start");
+const restart = readFileSync(process.env.FM_RESTART_LOG, "utf8").trim();
+if (!/^watcher: started pid=222 \(beacon fresh\)$/.test(restart)) {
+  throw new Error(`replacement was not verified fresh: ${restart}`);
+}
+await new Promise((resolve) => setTimeout(resolve, 300));
+if (prompts.some((message) => message.includes("fm-watch-arm.sh exited 143"))) {
+  throw new Error(`expected restart SIGTERM was reported as failure: ${prompts.join("\n")}`);
+}
+await afterReload.handlers.get("session_shutdown")?.({ reason: "quit" }, {});
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi reload restart SIGTERM must be benign after a verified fresh home watcher replaces it"
+  [ -z "$out" ] || fail "Pi verified-replacement test printed output: $out"
+  pass "Pi suppresses restart exit 143 only after a fresh home-scoped replacement is verified"
+}
+
+test_pi_reload_restart_sigterm_without_replacement_stays_failed() {
+  local repo home plugin out status
+  repo="$TMP_ROOT/pi-reload-no-replacement-root"
+  home="$TMP_ROOT/pi-reload-no-replacement-home"
+  mkdir -p "$repo/bin" "$home/state/.watch.lock" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-wake-lib.sh" <<'SH'
+fm_watcher_healthy() { return 1; }
+SH
+  : > "$repo/bin/fm-watch.sh"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+trap 'exit 143' TERM INT
+: > "${FM_ARM_STARTED:?}"
+while :; do sleep 1; done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_STARTED="$repo/arm-started" node --input-type=module 2>&1 <<'EOF'
+import { existsSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const handlers = new Map();
+let tool = null;
+let prompt = "";
+const pi = {
+  on(event, handler) { handlers.set(event, handler); },
+  registerCommand() {},
+  registerTool(candidate) {
+    if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+  },
+  getActiveTools() { return ["read", "fm_watch_arm_pi"]; },
+  setActiveTools() {},
+  sendUserMessage: async (message) => { prompt = message; },
+};
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+writeFileSync(`${process.env.FM_HOME}/state/.watch.lock/pid`, "111\n");
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+await tool.execute("before-failed-reload", {}, undefined, undefined, {});
+for (let i = 0; i < 50 && !existsSync(process.env.FM_ARM_STARTED); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+if (!existsSync(process.env.FM_ARM_STARTED)) throw new Error("failed arm did not start");
+await handlers.get("session_shutdown")?.({ reason: "reload" }, {});
+for (let i = 0; i < 100 && !prompt; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+if (!prompt.includes("watcher: FAILED - fm-watch-arm.sh exited 143")) {
+  throw new Error(`missing real restart failure: ${prompt}`);
+}
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi reload restart SIGTERM must remain a failure without a verified replacement"
+  [ -z "$out" ] || fail "Pi missing-replacement test printed output: $out"
+  pass "Pi keeps restart exit 143 actionable when no fresh home-scoped replacement exists"
+}
+
 test_pi_process_exit_cleanup_listener_lifecycle() {
   local repo home plugin out status
   repo="$TMP_ROOT/pi-exit-listener-root"
@@ -713,6 +939,9 @@ test_tracked_extension_present_and_self_hashing
 test_spawn_template_mentions_pi_watch_placeholder
 test_pi_extension_reports_external_healthy_watcher
 test_pi_tool_returns_agent_tool_result
+test_pi_tool_survives_late_reload_active_tool_reset
+test_pi_reload_restart_sigterm_is_benign_only_after_verified_replacement
+test_pi_reload_restart_sigterm_without_replacement_stays_failed
 test_pi_process_exit_cleanup_listener_lifecycle
 test_pi_process_exit_cleanup_stops_arm_child
 test_opencode_primary_watch_plugin_static_wiring
