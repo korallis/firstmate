@@ -77,7 +77,7 @@ When changing any primary watcher adapter, update `docs/supervision-protocols/`,
 
 `bin/fm-spawn.sh` accepts concrete `--harness`, `--model`, and `--effort` values chosen by firstmate at intake.
 Do not make the shell scripts parse or match natural-language dispatch rules.
-The supported launch-profile flags below were verified locally on 2026-06-30 with each CLI's help and parser path.
+The supported launch-profile flags below are verified locally; each row records its evidence.
 
 | Harness | Model flag | Effort flag | Notes |
 |---|---|---|---|
@@ -213,7 +213,7 @@ When a secondmate is launched on Pi, `fm-spawn.sh --secondmate` launches Pi with
 
 Grok Build TUI (`grok`), a Claude-Code-compatible CLI from xAI.
 Launch with a positional prompt: `grok --always-approve "$(cat <brief>)"`.
-`--reasoning-effort` (alias `--effort`) accepts only `low`, `medium`, and `high` as of grok 0.2.99; `xhigh` and `max` are rejected, and `fm-spawn` omits them rather than passing a known-bad value (see the launch-profile-axes table).
+For Grok's supported reasoning-effort values and omission behavior, see the [launch-profile-axes table](#launch-profile-axes).
 
 | Fact | Value |
 |---|---|
