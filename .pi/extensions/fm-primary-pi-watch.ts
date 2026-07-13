@@ -185,24 +185,26 @@ export default function (pi: ExtensionAPI) {
   }
 
   async function reportPriorRestart(): Promise<void> {
+    if (!sessionOwnsLock()) return;
     const deadline = Date.now() + 5000;
     let handoff = readRestartHandoff();
     if (!handoff) return;
-    while (!handoff.complete && apiActive && Date.now() < deadline) {
+    while (!handoff.complete && apiActive && sessionOwnsLock() && Date.now() < deadline) {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
       handoff = readRestartHandoff() || handoff;
     }
-    if (!handoff.complete || !apiActive) return;
+    if (!handoff.complete || !apiActive || !sessionOwnsLock()) return;
     if (handoff.reason) {
-      if (await sendWake(handoff.reason)) clearRestartHandoff();
+      if (await sendWake(handoff.reason) && sessionOwnsLock()) clearRestartHandoff();
       return;
     }
     if (handoff.code === 143 && await replacementWatcherIsHealthy(handoff.previousPid)) {
-      clearRestartHandoff();
+      if (sessionOwnsLock()) clearRestartHandoff();
       return;
     }
+    if (!sessionOwnsLock()) return;
     const failure = failureLine(handoff.stdout, handoff.stderr, handoff.code);
-    if (failure && await sendWake(failure)) clearRestartHandoff();
+    if (failure && await sendWake(failure) && sessionOwnsLock()) clearRestartHandoff();
   }
 
   function startArm(): ArmResult {

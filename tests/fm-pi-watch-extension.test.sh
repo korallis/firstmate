@@ -444,6 +444,59 @@ EOF
   pass "Pi keeps restart exit 143 actionable when no fresh home-scoped replacement exists"
 }
 
+test_pi_restart_handoff_requires_session_lock_ownership() {
+  local repo home plugin out status
+  repo="$TMP_ROOT/pi-restart-handoff-lock-root"
+  home="$TMP_ROOT/pi-restart-handoff-lock-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" node --input-type=module 2>&1 <<'EOF'
+import { spawn } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const handoff = `${process.env.FM_HOME}/state/.pi-watch-restart-handoff`;
+const prompts = [];
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+function loadExtension() {
+  mod.default({
+    on() {},
+    registerCommand() {},
+    registerTool() {},
+    sendUserMessage: async (message) => prompts.push(message),
+  });
+}
+
+const otherSession = spawn("sleep", ["30"]);
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${otherSession.pid}\n`);
+writeFileSync(handoff, `${JSON.stringify({ previousPid: "111", complete: true, stdout: "", stderr: "", code: 2, reason: "" })}\n`);
+loadExtension();
+await new Promise((resolve) => setTimeout(resolve, 200));
+if (prompts.length !== 0) throw new Error("read-only Pi session reported another session's restart handoff");
+if (!existsSync(handoff)) throw new Error("read-only Pi session deleted another session's restart handoff");
+
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+loadExtension();
+for (let i = 0; i < 50 && prompts.length === 0; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+if (!prompts.some((message) => message.includes("fm-watch-arm.sh exited 2"))) {
+  throw new Error(`owning Pi session did not report restart handoff: ${prompts.join("\n")}`);
+}
+for (let i = 0; i < 50 && existsSync(handoff); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+if (existsSync(handoff)) throw new Error("owning Pi session did not clear restart handoff after delivery");
+otherSession.kill("SIGTERM");
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi restart handoff processing and deletion must require session lock ownership"
+  [ -z "$out" ] || fail "Pi restart-handoff lock test printed output: $out"
+  pass "Pi restart handoff remains reserved for the session-lock owner"
+}
+
 test_pi_process_exit_cleanup_listener_lifecycle() {
   local repo home plugin out status
   repo="$TMP_ROOT/pi-exit-listener-root"
@@ -967,6 +1020,7 @@ test_pi_tool_returns_agent_tool_result
 test_pi_tool_survives_late_reload_active_tool_reset
 test_pi_reload_restart_sigterm_is_benign_only_after_verified_replacement
 test_pi_reload_restart_sigterm_without_replacement_stays_failed
+test_pi_restart_handoff_requires_session_lock_ownership
 test_pi_process_exit_cleanup_listener_lifecycle
 test_pi_process_exit_cleanup_stops_arm_child
 test_opencode_primary_watch_plugin_static_wiring
