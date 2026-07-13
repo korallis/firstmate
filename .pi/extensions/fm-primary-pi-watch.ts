@@ -1,7 +1,7 @@
 // Firstmate primary watcher bridge for Pi.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -14,6 +14,15 @@ type ArmResult = {
 
 type LockOwnership = "owned" | "missing" | "other";
 
+type RestartHandoff = {
+  previousPid: string;
+  complete: boolean;
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  reason: string;
+};
+
 const extensionFile = fileURLToPath(import.meta.url);
 const extensionDir = dirname(extensionFile);
 const root = resolve(extensionDir, "../..");
@@ -25,13 +34,9 @@ const armScript = `${fmRoot}/bin/fm-watch-arm.sh`;
 const watchScript = `${fmRoot}/bin/fm-watch.sh`;
 const wakeLib = `${fmRoot}/bin/fm-wake-lib.sh`;
 const marker = `${state}/.pi-watch-extension-loaded`;
+const restartHandoffFile = `${state}/.pi-watch-restart-handoff`;
 const watcherToolName = "fm_watch_arm_pi";
 const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(extensionFile)).digest("hex")}`;
-
-let child: any = null;
-let seq = 0;
-let stoppingForSessionShutdown = false;
-let replacedWatcherPid = "";
 
 function parentPid(pid: string): string {
   const result = spawnSync("ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" });
@@ -117,6 +122,25 @@ async function replacementWatcherIsHealthy(previousPid: string): Promise<boolean
   return false;
 }
 
+function readRestartHandoff(): RestartHandoff | null {
+  try {
+    return JSON.parse(readFileSync(restartHandoffFile, "utf8")) as RestartHandoff;
+  } catch {
+    return null;
+  }
+}
+
+function writeRestartHandoff(handoff: RestartHandoff): void {
+  mkdirSync(state, { recursive: true });
+  writeFileSync(restartHandoffFile, `${JSON.stringify(handoff)}\n`);
+}
+
+function clearRestartHandoff(): void {
+  try {
+    unlinkSync(restartHandoffFile);
+  } catch {}
+}
+
 function failureLine(stdout: string, stderr: string, code: number | null): string {
   const combined = `${stdout}\n${stderr}`.trim();
   const healthy = combined.split(/\r?\n/).find((line) => /^watcher: healthy\b/.test(line));
@@ -128,7 +152,14 @@ function failureLine(stdout: string, stderr: string, code: number | null): strin
 }
 
 export default function (pi: ExtensionAPI) {
+  let child: any = null;
+  let seq = 0;
+  let apiActive = true;
+  let stoppingForReload = false;
+  let replacedWatcherPid = "";
+
   function keepWatcherToolActive(): void {
+    if (!apiActive) return;
     const activeTools = pi.getActiveTools();
     if (activeTools.includes(watcherToolName)) return;
     pi.setActiveTools([...activeTools, watcherToolName]);
@@ -144,11 +175,34 @@ export default function (pi: ExtensionAPI) {
   };
   process.once("exit", cleanupOnProcessExit);
 
-  async function sendWake(message: string) {
+  async function sendWake(message: string): Promise<boolean> {
+    if (!apiActive) return false;
     await pi.sendUserMessage(
       `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first, handle the queued wake, then resume Pi supervision.`,
       { deliverAs: "followUp" },
     );
+    return true;
+  }
+
+  async function reportPriorRestart(): Promise<void> {
+    const deadline = Date.now() + 5000;
+    let handoff = readRestartHandoff();
+    if (!handoff) return;
+    while (!handoff.complete && apiActive && Date.now() < deadline) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+      handoff = readRestartHandoff() || handoff;
+    }
+    if (!handoff.complete || !apiActive) return;
+    if (handoff.reason) {
+      if (await sendWake(handoff.reason)) clearRestartHandoff();
+      return;
+    }
+    if (handoff.code === 143 && await replacementWatcherIsHealthy(handoff.previousPid)) {
+      clearRestartHandoff();
+      return;
+    }
+    const failure = failureLine(handoff.stdout, handoff.stderr, handoff.code);
+    if (failure && await sendWake(failure)) clearRestartHandoff();
   }
 
   function startArm(): ArmResult {
@@ -179,10 +233,11 @@ export default function (pi: ExtensionAPI) {
     child.on("close", async (code: number | null) => {
       child = null;
       const reason = actionableLine(`${stdout}\n${stderr}`);
-      const expectedRestart = !reason && code === 143 && stoppingForSessionShutdown
-        ? await replacementWatcherIsHealthy(replacedWatcherPid)
-        : false;
-      const failure = reason || expectedRestart ? "" : failureLine(stdout, stderr, code);
+      if (stoppingForReload) {
+        writeRestartHandoff({ previousPid: replacedWatcherPid, complete: true, stdout, stderr, code, reason });
+        return;
+      }
+      const failure = reason ? "" : failureLine(stdout, stderr, code);
       if (!reason && !failure) return;
       try {
         await sendWake(reason || failure);
@@ -192,8 +247,13 @@ export default function (pi: ExtensionAPI) {
     });
     child.on("error", async (error: Error) => {
       child = null;
+      const failure = `watcher: FAILED - Pi extension arm child ${id} failed: ${error.message}`;
+      if (stoppingForReload) {
+        writeRestartHandoff({ previousPid: replacedWatcherPid, complete: true, stdout, stderr: failure, code: null, reason: "" });
+        return;
+      }
       try {
-        await sendWake(`watcher: FAILED - Pi extension arm child ${id} failed: ${error.message}`);
+        await sendWake(failure);
       } catch {
         // Fail open.
       }
@@ -209,9 +269,13 @@ export default function (pi: ExtensionAPI) {
     // have selected their safety-scoped tool surface.
     keepWatcherToolActive();
   });
-  pi.on?.("session_shutdown", () => {
-    stoppingForSessionShutdown = true;
-    replacedWatcherPid = recordedWatcherPid();
+  pi.on?.("session_shutdown", (event: { reason?: string }) => {
+    apiActive = false;
+    stoppingForReload = event?.reason === "reload";
+    if (stoppingForReload && child) {
+      replacedWatcherPid = recordedWatcherPid();
+      writeRestartHandoff({ previousPid: replacedWatcherPid, complete: false, stdout: "", stderr: "", code: null, reason: "" });
+    }
     stopArm();
     process.off("exit", cleanupOnProcessExit);
   });
@@ -243,4 +307,5 @@ export default function (pi: ExtensionAPI) {
   });
 
   markLoaded();
+  void reportPriorRestart().catch(() => {});
 }

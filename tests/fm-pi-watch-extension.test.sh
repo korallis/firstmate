@@ -310,18 +310,27 @@ const prompts = [];
 function loadExtension() {
   const handlers = new Map();
   let tool = null;
+  let apiActive = true;
   const pi = {
     on(event, handler) { handlers.set(event, handler); },
     registerCommand() {},
     registerTool(candidate) {
       if (candidate.name === "fm_watch_arm_pi") tool = candidate;
     },
-    getActiveTools() { return ["read", "fm_watch_arm_pi"]; },
-    setActiveTools() {},
-    sendUserMessage: async (message) => { prompts.push(message); },
+    getActiveTools() {
+      if (!apiActive) throw new Error("extension ctx is stale");
+      return ["read", "fm_watch_arm_pi"];
+    },
+    setActiveTools() {
+      if (!apiActive) throw new Error("extension ctx is stale");
+    },
+    sendUserMessage: async (message) => {
+      if (!apiActive) throw new Error("extension ctx is stale");
+      prompts.push(message);
+    },
   };
   mod.default(pi);
-  return { handlers, getTool: () => tool };
+  return { handlers, getTool: () => tool, invalidate: () => { apiActive = false; } };
 }
 
 writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
@@ -333,6 +342,7 @@ for (let i = 0; i < 50 && !existsSync(process.env.FM_FIRST_ARM_STARTED); i += 1)
 }
 if (!existsSync(process.env.FM_FIRST_ARM_STARTED)) throw new Error("initial arm did not start");
 await beforeReload.handlers.get("session_shutdown")?.({ reason: "reload" }, {});
+beforeReload.invalidate();
 await new Promise((resolve) => setTimeout(resolve, 1200));
 const afterReload = loadExtension();
 const result = await afterReload.getTool().execute("after-reload", {}, undefined, undefined, {});
@@ -382,29 +392,44 @@ SH
 import { existsSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const handlers = new Map();
-let tool = null;
 let prompt = "";
-const pi = {
-  on(event, handler) { handlers.set(event, handler); },
-  registerCommand() {},
-  registerTool(candidate) {
-    if (candidate.name === "fm_watch_arm_pi") tool = candidate;
-  },
-  getActiveTools() { return ["read", "fm_watch_arm_pi"]; },
-  setActiveTools() {},
-  sendUserMessage: async (message) => { prompt = message; },
-};
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+function loadExtension() {
+  const handlers = new Map();
+  let tool = null;
+  let apiActive = true;
+  const pi = {
+    on(event, handler) { handlers.set(event, handler); },
+    registerCommand() {},
+    registerTool(candidate) {
+      if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+    },
+    getActiveTools() {
+      if (!apiActive) throw new Error("extension ctx is stale");
+      return ["read", "fm_watch_arm_pi"];
+    },
+    setActiveTools() {
+      if (!apiActive) throw new Error("extension ctx is stale");
+    },
+    sendUserMessage: async (message) => {
+      if (!apiActive) throw new Error("extension ctx is stale");
+      prompt = message;
+    },
+  };
+  mod.default(pi);
+  return { handlers, getTool: () => tool, invalidate: () => { apiActive = false; } };
+}
 writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
 writeFileSync(`${process.env.FM_HOME}/state/.watch.lock/pid`, "111\n");
-const mod = await import(pathToFileURL(process.env.PLUGIN).href);
-mod.default(pi);
-await tool.execute("before-failed-reload", {}, undefined, undefined, {});
+const beforeReload = loadExtension();
+await beforeReload.getTool().execute("before-failed-reload", {}, undefined, undefined, {});
 for (let i = 0; i < 50 && !existsSync(process.env.FM_ARM_STARTED); i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 if (!existsSync(process.env.FM_ARM_STARTED)) throw new Error("failed arm did not start");
-await handlers.get("session_shutdown")?.({ reason: "reload" }, {});
+await beforeReload.handlers.get("session_shutdown")?.({ reason: "reload" }, {});
+beforeReload.invalidate();
+loadExtension();
 for (let i = 0; i < 100 && !prompt; i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 100));
 }
