@@ -19,13 +19,6 @@ PROJECT="$LAB/project"
 HOME_DIR="$LAB/fmhome"
 PI_DIR="$LAB/pi-agent"
 PI_VERSION=$(pi --version)
-WORKFLOW_PACKAGE_DIR=${FM_PI_WORKFLOW_SUITE_DIR:-"$HOME/.pi/agent/npm/node_modules/@mediadatafusion/pi-workflow-suite"}
-WORKFLOW_EXTENSION="$WORKFLOW_PACKAGE_DIR/extensions/workflow-modes.ts"
-if [ ! -f "$WORKFLOW_EXTENSION" ] || [ ! -f "$WORKFLOW_PACKAGE_DIR/package.json" ]; then
-  echo "skip: installed @mediadatafusion/pi-workflow-suite package not found"
-  exit 0
-fi
-WORKFLOW_VERSION=$(node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(p.version)' "$WORKFLOW_PACKAGE_DIR/package.json")
 PI_AUTH_FILE=${FM_PI_AUTH_FILE:-"$HOME/.pi/agent/auth.json"}
 if [ ! -f "$PI_AUTH_FILE" ]; then
   echo "skip: Pi auth file not found for live model calls"
@@ -118,17 +111,26 @@ git clone -q "$ROOT" "$PROJECT"
 cp "$ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$PROJECT/.pi/extensions/fm-primary-pi-watch.ts"
 cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$PROJECT/.pi/extensions/fm-primary-turnend-guard.ts"
 cp "$ROOT/bin/fm-supervision-instructions.sh" "$PROJECT/bin/fm-supervision-instructions.sh"
+cat > "$PROJECT/.pi/extensions/fm-late-active-reset.ts" <<'TS'
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("session_start", () => {
+    pi.setActiveTools(["read", "bash"]);
+  });
+}
+TS
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/config" "$PI_DIR"
 cp "$PI_AUTH_FILE" "$PI_DIR/auth.json"
 chmod 600 "$PI_DIR/auth.json"
 
 "$TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -c "$PROJECT" \
-  "env PI_CODING_AGENT_DIR='$PI_DIR' FM_HOME='$HOME_DIR' FM_ROOT_OVERRIDE='$PROJECT' FM_POLL=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=600 PI_OFFLINE=1 bash -lc 'printf \"%s\\n\" \"\$\$\" > \"\$FM_HOME/state/.lock\"; pi --no-extensions -e \"$PROJECT/.pi/extensions/fm-primary-pi-watch.ts\" -e \"$PROJECT/.pi/extensions/fm-primary-turnend-guard.ts\" -e \"$WORKFLOW_EXTENSION\"; rc=\$?; printf \"PI_EXIT=%s\\n\" \"\$rc\"; sleep 300'"
+  "env PI_CODING_AGENT_DIR='$PI_DIR' FM_HOME='$HOME_DIR' FM_ROOT_OVERRIDE='$PROJECT' FM_POLL=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=600 PI_OFFLINE=1 bash -lc 'printf \"%s\\n\" \"\$\$\" > \"\$FM_HOME/state/.lock\"; pi --no-extensions -e \"$PROJECT/.pi/extensions/fm-primary-pi-watch.ts\" -e \"$PROJECT/.pi/extensions/fm-primary-turnend-guard.ts\" -e \"$PROJECT/.pi/extensions/fm-late-active-reset.ts\"; rc=\$?; printf \"PI_EXIT=%s\\n\" \"\$rc\"; sleep 300'"
 
 wait_for_text "Trust project folder?" 40 || fail "Pi trust prompt did not appear"
 "$TMUX" -L "$SOCKET" send-keys -t "$SESSION" Enter
 wait_for_text "fm-primary-turnend-guard.ts" 60 || fail "Pi primary extensions did not load"
-wait_for_text "workflow-modes.ts" 60 || fail "Workflow Suite extension did not load"
+wait_for_text "fm-late-active-reset.ts" 60 || fail "late active-tool reset extension did not load"
 
 send_prompt "Use the bash tool to run printf PI_E2E_BASH_ONE. Then reply exactly BASH-ONE."
 wait_for_exact_line "BASH-ONE" || fail "first bash turn did not complete"
@@ -170,4 +172,4 @@ wait_for_text "PI_EXIT=0" 60 || fail "Pi did not exit cleanly"
 wait_pid_dead "$watcher_pid" || fail "watcher child survived clean Pi exit"
 wait_pid_dead "$arm_pid" || fail "arm child survived clean Pi exit"
 
-printf 'ok - Pi %s with Workflow Suite %s kept the watcher tool active after /reload, guarded once, woke, re-armed, and cleaned up on exit\n' "$PI_VERSION" "$WORKFLOW_VERSION"
+printf 'ok - Pi %s kept the watcher tool active after a late /reload reset, guarded once, woke, re-armed, and cleaned up on exit\n' "$PI_VERSION"
