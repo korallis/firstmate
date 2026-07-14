@@ -533,7 +533,14 @@ if [ "$HAVE_RUN" = 1 ]; then
       CI_LOG_STATE=not-ready
     fi
     if [ "$CI_LOG_STATE" != not-ready ]; then
-      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
+      ready_detail="$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
+      if [ -n "$RUN_ID" ]; then
+        ready_detail="$ready_detail${SEP}run-identity: $RUN_ID"
+        if [ -n "$CI_GENERATION" ] && [ "$CI_GENERATION" != unknown ]; then
+          ready_detail="$ready_detail|$CI_GENERATION"
+        fi
+      fi
+      emit "done" status-log "$ready_detail"
     fi
   fi
 
@@ -544,7 +551,10 @@ if [ "$HAVE_RUN" = 1 ]; then
           CI_SNAPSHOT=$(nm_ci_checks_snapshot)
           CI_GENERATION=${CI_SNAPSHOT#*|}
         fi
-        RUN_DETAIL="$RUN_DETAIL${SEP}run-identity: $RUN_ID|${CI_GENERATION:-unknown}"
+        RUN_DETAIL="$RUN_DETAIL${SEP}run-identity: $RUN_ID"
+        if [ -n "$CI_GENERATION" ] && [ "$CI_GENERATION" != unknown ]; then
+          RUN_DETAIL="$RUN_DETAIL|$CI_GENERATION"
+        fi
         ;;
     esac
   fi

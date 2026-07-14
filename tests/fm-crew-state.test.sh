@@ -280,6 +280,19 @@ outcome: failed
 EOF
 }
 
+run_checks_passed() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: ci
+  head: "abc1234"
+  pr: "https://github.com/o/r/pull/2"
+  findings: none
+outcome: checks-passed
+EOF
+}
+
 run_ci_monitoring() {  # <branch>
   cat <<EOF
 run:
@@ -442,6 +455,8 @@ test_ci_ready_done_log_beats_monitoring_run() {
   assert_contains "$out" "state: done" "ci-ready status log -> done"
   assert_contains "$out" "source: status-log" "ci-ready state comes from the status log"
   assert_contains "$out" "checks green" "ci-ready detail preserves the report"
+  assert_contains "$out" "run-identity: 01RUN" "ci-ready status correlates to its monitoring run"
+  assert_not_contains "$out" "run-identity: 01RUN|unknown" "unreadable CI logs do not create a volatile generation"
   assert_not_contains "$out" "state: working" "ci-ready is not hidden by monitoring run"
   pass "ci-ready status log beats monitoring run"
 }
@@ -471,6 +486,31 @@ EOF
   assert_contains "$out" "run-identity: 01RUN|" "green ci-monitor exposes stable run generation"
   assert_not_contains "$out" "state: working" "green ci-monitor must not read as still validating"
   pass "ci-monitoring run with checks already green surfaces done"
+}
+
+test_checks_passed_unknown_generation_is_progressive() {
+  reset_fakes
+  local d first second first_identity second_identity
+  d=$(new_case checks-passed-progressive)
+  make_repo_on_branch "$d/wt" fm/feat-checkspassed
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-checkspassed.meta" "window=fm:fm-feat-checkspassed" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_checks_passed fm/feat-checkspassed)"
+  FM_FAKE_CI_LOGS=""
+  first=$(run_crew_state "$d" feat-checkspassed)
+  first_identity=${first#*run-identity: }
+  first_identity=${first_identity%% *}
+  [ "$first_identity" = 01RUN ] || fail "unknown CI generation was rendered as unstable identity: $first_identity"
+  FM_FAKE_CI_LOGS=$(cat <<'EOF'
+CI checks running, waiting for results...
+all CI checks passed - still monitoring until merged or closed
+EOF
+)
+  second=$(run_crew_state "$d" feat-checkspassed)
+  second_identity=${second#*run-identity: }
+  second_identity=${second_identity%% *}
+  case "$second_identity" in '01RUN|'*) ;; *) fail "readable CI generation did not refine the run identity" ;; esac
+  pass "checks-passed identity refines without an unknown generation sentinel"
 }
 
 test_ci_monitor_generation_records_transient_relapse() {
@@ -1181,6 +1221,7 @@ test_scalar_gate_parked_not_superseded
 test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
 test_ci_monitoring_checks_green_surfaces_done
+test_checks_passed_unknown_generation_is_progressive
 test_ci_monitor_generation_records_transient_relapse
 test_top_level_ci_checks_green_surfaces_done
 test_ci_monitoring_no_checks_terminal_surfaces_done

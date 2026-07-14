@@ -13,6 +13,8 @@ TMP_ROOT=$(fm_test_tmproot fm-pr-ready-wake-tests)
 READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|4294967295:0'
 ALT_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7|4294967295:0 · status-log event superseded by authoritative run'
 RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|1289303112:42'
+STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR · run-identity: run-7'
+UNKNOWN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7'
 WORKING_LINE='state: working · source: run-step · ci running'
 FAILED_LINE='state: failed · source: run-step · run failed'
 PAUSED_GREEN_LINE='state: paused · source: status-log · awaiting upstream owner · checks green: PR ready for review (still monitoring for merge/close)'
@@ -153,7 +155,7 @@ test_done_status_seeds_next_generation_dedupe() {
   printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/status-ready.status"
   printf 'Working...\n' > "$dir/pane"
   first_out="$dir/first.out"
-  FM_FAKE_CREW_STATE="$READY_LINE" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+  FM_FAKE_CREW_STATE="$STATUS_READY_LINE" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
     PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
     FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
     FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
@@ -181,6 +183,22 @@ test_done_status_seeds_next_generation_dedupe() {
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "next generation queued duplicate readiness"; }
   reap "$pid"
   pass "done/checks-green signal suppresses duplicate readiness in the next watcher generation"
+}
+
+test_unknown_generation_upgrades_without_duplicate() {
+  local dir state fakebin first known recovered marker
+  dir=$(make_case unknown-generation); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" unknown-generation off
+  first=$(next_ready "$state" "$fakebin" unknown-generation "$UNKNOWN_READY_LINE")
+  [ -n "$first" ] || fail "unknown CI generation missed its first ready transition"
+  commit_record "$state" "$first"
+  known=$(next_ready "$state" "$fakebin" unknown-generation "$READY_LINE")
+  [ -z "$known" ] || fail "newly readable CI generation duplicated readiness"
+  marker=$(cat "$state/.pr-ready-unknown-generation")
+  case "$marker" in *'run-7|4294967295:0') ;; *) fail "newly readable CI generation did not upgrade the marker" ;; esac
+  recovered=$(next_ready "$state" "$fakebin" unknown-generation "$RECOVERED_READY_LINE")
+  [ -n "$recovered" ] || fail "later CI relapse was suppressed after marker upgrade"
+  pass "unknown CI generation anchors once and upgrades without duplicate wake"
 }
 
 test_transient_relapse_changes_stable_generation() {
@@ -348,6 +366,7 @@ test_background_ci_fixer_wakes_before_stale_status
 test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
+test_unknown_generation_upgrades_without_duplicate
 test_transient_relapse_changes_stable_generation
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan

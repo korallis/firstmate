@@ -50,9 +50,12 @@ fm_pr_ready_verdict() {  # <crew-state-line>
   state=${line#state: }
   state=${state%% *}
   case "$line" in *'source: '*) source=${line#*source: }; source=${source%% *} ;; *) source=none ;; esac
-  if [ "$state" = "done" ] && [ "$source" = run-step ]; then
-    case "$line" in
-      *'checks green: PR ready for review'*) printf 'ready'; return ;;
+  if [ "$state" = "done" ]; then
+    case "$source:$line" in
+      run-step:*'checks green: PR ready for review'*|status-log:*'checks green'*'run still monitoring PR'*)
+        printf 'ready'
+        return
+        ;;
     esac
   fi
   case "$state" in
@@ -74,6 +77,19 @@ fm_pr_ready_identity() {  # <meta> <crew-state-line>
   esac
   printf '%s|%s' "${branch:-unknown-branch}" "${head:-unknown-head}"
   [ -n "${authority:-}" ] && printf '|%s' "$authority"
+}
+
+fm_pr_ready_identity_relation() {  # <prior> <current>
+  local prior=$1 current=$2
+  if [ "$prior" = "$current" ]; then
+    printf 'same'
+  elif [ -n "$prior" ] && [ "${current#"$prior|"}" != "$current" ]; then
+    printf 'upgrade'
+  elif [ -n "$current" ] && [ "${prior#"$current|"}" != "$prior" ]; then
+    printf 'same'
+  else
+    printf 'different'
+  fi
 }
 
 fm_pr_ready_status_reports_ready() {  # <status-line>
@@ -100,7 +116,7 @@ fm_pr_ready_reason() {  # <task-id> <yolo>
 # Print one TAB-separated "<id>\t<identity>\t<reason>" transition, or nothing.
 # A non-ready authoritative observation clears the task's prior green marker.
 fm_pr_ready_transition() {  # <state> <task-id>
-  local state=$1 id=$2 meta kind mode yolo line verdict marker identity prior
+  local state=$1 id=$2 meta kind mode yolo line verdict marker identity prior relation
   meta="$state/$id.meta"
   [ -e "$meta" ] || return 1
   kind=$(fm_pr_ready_meta_value "$meta" kind)
@@ -120,7 +136,14 @@ fm_pr_ready_transition() {  # <state> <task-id>
     ready)
       identity=$(fm_pr_ready_identity "$meta" "$line")
       prior=$(cat "$marker" 2>/dev/null || true)
-      [ "$prior" = "$identity" ] && return 1
+      relation=$(fm_pr_ready_identity_relation "$prior" "$identity")
+      case "$relation" in
+        same) return 1 ;;
+        upgrade)
+          fm_pr_ready_commit "$state" "$id" "$identity"
+          return 1
+          ;;
+      esac
       yolo=$(fm_pr_ready_meta_value "$meta" yolo)
       [ "$yolo" = on ] || yolo=off
       printf '%s\t%s\t%s\n' "$id" "$identity" "$(fm_pr_ready_reason "$id" "$yolo")"
