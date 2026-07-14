@@ -216,13 +216,13 @@ fm/task|head-1|run-7	fm/task|head-1|baseline|run-7	upgrade
 fm/task|head-1|baseline	fm/task|head-1|run-7|baseline	upgrade
 fm/task|head-1|run-7|baseline	fm/task|head-1|baseline|run-7	same
 fm/task|head-1|run-7|baseline	fm/task|head-1|run-7	same
-fm/task|head-1|run-7	fm/task|head-1|run-7|relapse-42:1	different
-fm/task|head-1|run-7|baseline	fm/task|head-1|run-7|relapse-42:1	different
-fm/task|head-1|run-7|baseline	fm/task|head-1|run-8|baseline	different
+fm/task|head-1|run-7	fm/task|head-1|run-7|relapse-42:1	upgrade
+fm/task|head-1|run-7|baseline	fm/task|head-1|run-7|relapse-42:1	upgrade
+fm/task|head-1|run-7|baseline	fm/task|head-1|run-8|baseline	upgrade
 fm/task|head-1|run-7|baseline	fm/other|head-1|run-7|baseline	different
 fm/task|head-1|run-7|baseline	fm/task|head-2|run-7|baseline	different
 MATRIX
-  pass "identity refinement is order-independent while relapse and branch/head changes stay distinct"
+  pass "same-head identity refinement is silent while branch and head changes stay distinct"
 }
 
 test_unknown_generation_upgrades_without_duplicate() {
@@ -237,20 +237,45 @@ test_unknown_generation_upgrades_without_duplicate() {
   marker=$(cat "$state/.pr-ready-unknown-generation")
   case "$marker" in *'run-7|baseline') ;; *) fail "newly readable CI generation did not upgrade the marker" ;; esac
   recovered=$(next_ready "$state" "$fakebin" unknown-generation "$RECOVERED_READY_LINE")
-  [ -n "$recovered" ] || fail "later CI relapse was suppressed after marker upgrade"
-  pass "unknown CI generation anchors once and upgrades without duplicate wake"
+  [ -z "$recovered" ] || fail "newly readable same-HEAD history duplicated readiness"
+  pass "unknown CI generation anchors and refines without duplicate wake"
 }
 
-test_unknown_generation_refinement_preserves_relapse() {
-  local dir state fakebin first recovered
-  dir=$(make_case unknown-generation-relapse); state="$dir/state"; fakebin="$dir/fakebin"
-  make_task "$dir" unknown-relapse off
-  first=$(next_ready "$state" "$fakebin" unknown-relapse "$UNKNOWN_READY_LINE")
+test_hidden_preexisting_relapse_refines_without_duplicate() {
+  local dir state fakebin first recovered marker
+  dir=$(make_case hidden-preexisting-relapse); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" hidden-relapse off
+  first=$(next_ready "$state" "$fakebin" hidden-relapse "$UNKNOWN_READY_LINE")
   [ -n "$first" ] || fail "unreadable initial readiness did not wake"
   commit_record "$state" "$first"
-  recovered=$(next_ready "$state" "$fakebin" unknown-relapse "$RECOVERED_READY_LINE")
-  [ -n "$recovered" ] || fail "identity refinement hid an intervening relapse"
-  pass "identity refinement preserves relapse after initially unreadable CI logs"
+  recovered=$(next_ready "$state" "$fakebin" hidden-relapse "$RECOVERED_READY_LINE")
+  [ -z "$recovered" ] || fail "newly readable preexisting relapse duplicated readiness"
+  marker=$(cat "$state/.pr-ready-hidden-relapse")
+  case "$marker" in *'relapse-1289303112:42') ;; *) fail "newly readable history did not refine the marker" ;; esac
+  pass "hidden preexisting relapse refines readiness without a duplicate"
+}
+
+test_observed_relapse_survives_watcher_restart() {
+  local dir state fakebin first after superseded
+  dir=$(make_case observed-relapse-restart); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" observed-relapse off
+  first=$(next_ready "$state" "$fakebin" observed-relapse "$UNKNOWN_READY_LINE")
+  commit_record "$state" "$first"
+  FM_STATE_OVERRIDE="$state" FM_FAKE_CREW_STATE="$WORKING_LINE" \
+    FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    bash -c '. "$1"; fm_pr_ready_transition "$2" observed-relapse >/dev/null || true' \
+      _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state"
+  [ ! -e "$state/.pr-ready-observed-relapse" ] || fail "observed relapse left the ready marker active"
+  superseded="$state/.pr-ready-superseded-observed-relapse"
+  [ -s "$superseded" ] || fail "observed relapse did not persist supersession"
+  after=$(FM_STATE_OVERRIDE="$state" FM_FAKE_CREW_STATE="$RECOVERED_READY_LINE" \
+    FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    bash -c '. "$1"; fm_pr_ready_transition "$2" observed-relapse || true' \
+      _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state")
+  [ -n "$after" ] || fail "watcher restart lost observed relapse supersession"
+  commit_record "$state" "$after"
+  [ ! -e "$superseded" ] || fail "committed recovery did not clear supersession"
+  pass "observed relapse persists across watcher restart and re-surfaces green"
 }
 
 test_transient_git_identity_failure_preserves_marker() {
@@ -288,15 +313,15 @@ test_signal_cannot_starve_pr_ready_sweep() {
   pass "actionable signals cannot starve bounded PR-ready scans"
 }
 
-test_transient_relapse_changes_stable_generation() {
+test_unobserved_relapse_history_refines_without_duplicate() {
   local dir state fakebin first recovered
-  dir=$(make_case transient-relapse); state="$dir/state"; fakebin="$dir/fakebin"
-  make_task "$dir" transient-relapse off
-  first=$(next_ready "$state" "$fakebin" transient-relapse "$READY_LINE")
+  dir=$(make_case unobserved-relapse); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" unobserved-relapse off
+  first=$(next_ready "$state" "$fakebin" unobserved-relapse "$READY_LINE")
   commit_record "$state" "$first"
-  recovered=$(next_ready "$state" "$fakebin" transient-relapse "$RECOVERED_READY_LINE")
-  [ -n "$recovered" ] || fail "same-HEAD recovery after an unobserved relapse was suppressed"
-  pass "stable CI-monitor generation preserves transient relapse and recovery"
+  recovered=$(next_ready "$state" "$fakebin" unobserved-relapse "$RECOVERED_READY_LINE")
+  [ -z "$recovered" ] || fail "unobserved same-HEAD history emitted a duplicate"
+  pass "unobserved same-HEAD relapse history is benign refinement"
 }
 
 test_relapse_rearm_and_head_change_supersede_green() {
@@ -404,10 +429,12 @@ test_approval_posture_changes_reason_not_authority() {
 test_pr_ready_state_cleanup() {
   local dir state
   dir=$(make_case state-cleanup); state="$dir/state"
-  touch "$state/.pr-ready-cleanup" "$state/.last-pr-ready-cleanup"
+  touch "$state/.pr-ready-cleanup" "$state/.last-pr-ready-cleanup" \
+    "$state/.pr-ready-superseded-cleanup"
   fm_pr_ready_cleanup "$state" cleanup
   [ ! -e "$state/.pr-ready-cleanup" ] || fail "readiness marker survived cleanup"
   [ ! -e "$state/.last-pr-ready-cleanup" ] || fail "readiness cadence marker survived cleanup"
+  [ ! -e "$state/.pr-ready-superseded-cleanup" ] || fail "readiness supersession survived cleanup"
   grep -F "fm_pr_ready_cleanup \"\$STATE\" \"\$ID\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
     || fail "normal teardown does not invoke PR-ready cleanup"
   grep -F "fm_pr_ready_cleanup \"\$sub_state\" \"\$child_id\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
@@ -456,10 +483,11 @@ test_done_status_seeds_next_generation_dedupe
 test_coarse_status_refines_to_authoritative_baseline
 test_identity_refinement_relation_matrix
 test_unknown_generation_upgrades_without_duplicate
-test_unknown_generation_refinement_preserves_relapse
+test_hidden_preexisting_relapse_refines_without_duplicate
+test_observed_relapse_survives_watcher_restart
 test_transient_git_identity_failure_preserves_marker
 test_signal_cannot_starve_pr_ready_sweep
-test_transient_relapse_changes_stable_generation
+test_unobserved_relapse_history_refines_without_duplicate
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
 test_changing_pane_failure_is_observed_by_task_scan

@@ -11,9 +11,12 @@
 # The identity combines branch and HEAD with fm-crew-state's stable run/CI-monitor
 # generation, never volatile rendered current-state detail.
 # Any observed authoritative re-arm, failed check, pause, gate, or other non-ready
-# state clears the marker so a later green state re-surfaces.
-# An unknown/unreadable state preserves it rather than manufacturing a duplicate
-# from a transient read error.
+# state records persistent supersession and clears the marker so a later green
+# state re-surfaces, including after a watcher restart.
+# Newly readable history only refines an existing marker; it never substitutes
+# identity-string inference for an observed supersession.
+# An unknown/unreadable state preserves readiness rather than manufacturing a
+# duplicate from a transient read error.
 #
 # The watcher must enqueue before calling fm_pr_ready_commit. This library never
 # merges, approves, invokes GitHub, answers ask-user findings, or makes a safety
@@ -39,8 +42,16 @@ fm_pr_ready_scan_path() {  # <state> <task-id>
   printf '%s/.last-pr-ready-%s' "$1" "$key"
 }
 
+fm_pr_ready_superseded_path() {  # <state> <task-id>
+  local key
+  key=$(printf '%s' "$2" | tr ':/.' '___')
+  printf '%s/.pr-ready-superseded-%s' "$1" "$key"
+}
+
 fm_pr_ready_cleanup() {  # <state> <task-id>
-  rm -f "$(fm_pr_ready_marker_path "$1" "$2")" "$(fm_pr_ready_scan_path "$1" "$2")"
+  rm -f "$(fm_pr_ready_marker_path "$1" "$2")" \
+    "$(fm_pr_ready_scan_path "$1" "$2")" \
+    "$(fm_pr_ready_superseded_path "$1" "$2")"
 }
 
 # Print ready, supersede, or indeterminate for one canonical crew-state line.
@@ -103,20 +114,6 @@ fm_pr_ready_components_subset() {  # <candidate-subset> <candidate-superset>
   done
 }
 
-fm_pr_ready_adds_relapse() {  # <prior-components> <current-components>
-  local prior=$1 remaining=$2 item
-  while [ -n "$remaining" ]; do
-    item=${remaining%%|*}
-    if [ "$remaining" = "$item" ]; then remaining=; else remaining=${remaining#*|}; fi
-    case "$item" in
-      relapse-*)
-        fm_pr_ready_components_subset "$item" "$prior" || return 0
-        ;;
-    esac
-  done
-  return 1
-}
-
 fm_pr_ready_identity_relation() {  # <prior> <current>
   local prior=$1 current=$2 prior_rest current_rest prior_branch current_branch
   local prior_head current_head prior_components current_components
@@ -138,19 +135,19 @@ fm_pr_ready_identity_relation() {  # <prior> <current>
     || { printf 'different'; return; }
   case "$prior_rest" in *'|'*) prior_components=${prior_rest#*|} ;; *) prior_components= ;; esac
   case "$current_rest" in *'|'*) current_components=${current_rest#*|} ;; *) current_components= ;; esac
-  if fm_pr_ready_components_subset "$prior_components" "$current_components"; then
-    if fm_pr_ready_components_subset "$current_components" "$prior_components"; then
-      printf 'same'
-    elif fm_pr_ready_adds_relapse "$prior_components" "$current_components"; then
-      printf 'different'
-    else
-      printf 'upgrade'
-    fi
-  elif fm_pr_ready_components_subset "$current_components" "$prior_components"; then
+  if fm_pr_ready_components_subset "$current_components" "$prior_components"; then
     printf 'same'
   else
-    printf 'different'
+    printf 'upgrade'
   fi
+}
+
+fm_pr_ready_mark_superseded() {  # <state> <task-id> <prior-identity>
+  local state=$1 path tmp observed_at
+  path=$(fm_pr_ready_superseded_path "$state" "$2")
+  tmp="$path.tmp.${BASHPID:-$$}"
+  observed_at=$(date +%s)
+  printf '%s\t%s\n' "$observed_at" "$3" > "$tmp" && mv -f "$tmp" "$path"
 }
 
 fm_pr_ready_status_reports_ready() {  # <status-line>
@@ -177,7 +174,7 @@ fm_pr_ready_reason() {  # <task-id> <yolo>
 # Print one TAB-separated "<id>\t<identity>\t<reason>" transition, or nothing.
 # A non-ready authoritative observation clears the task's prior green marker.
 fm_pr_ready_transition() {  # <state> <task-id>
-  local state=$1 id=$2 meta kind mode yolo line verdict marker identity prior relation
+  local state=$1 id=$2 meta kind mode yolo line verdict marker identity prior relation superseded
   meta="$state/$id.meta"
   [ -e "$meta" ] || return 1
   kind=$(fm_pr_ready_meta_value "$meta" kind)
@@ -187,24 +184,31 @@ fm_pr_ready_transition() {  # <state> <task-id>
   [ -n "$mode" ] || mode=no-mistakes
   [ "$mode" = no-mistakes ] || return 1
   marker=$(fm_pr_ready_marker_path "$state" "$id")
+  superseded=$(fm_pr_ready_superseded_path "$state" "$id")
   line=$(FM_STATE_OVERRIDE="$state" "$FM_PR_READY_STATE_BIN" "$id" 2>/dev/null | head -1) || true
   verdict=$(fm_pr_ready_verdict "$line")
   case "$verdict" in
     supersede)
-      rm -f "$marker"
+      prior=$(cat "$marker" 2>/dev/null || true)
+      if [ -n "$prior" ]; then
+        fm_pr_ready_mark_superseded "$state" "$id" "$prior" || return 1
+        rm -f "$marker"
+      fi
       return 1
       ;;
     ready)
       identity=$(fm_pr_ready_identity "$meta" "$line") || return 1
       prior=$(cat "$marker" 2>/dev/null || true)
-      relation=$(fm_pr_ready_identity_relation "$prior" "$identity")
-      case "$relation" in
-        same) return 1 ;;
-        upgrade)
-          fm_pr_ready_commit "$state" "$id" "$identity"
-          return 1
-          ;;
-      esac
+      if [ ! -e "$superseded" ]; then
+        relation=$(fm_pr_ready_identity_relation "$prior" "$identity")
+        case "$relation" in
+          same) return 1 ;;
+          upgrade)
+            fm_pr_ready_commit "$state" "$id" "$identity"
+            return 1
+            ;;
+        esac
+      fi
       yolo=$(fm_pr_ready_meta_value "$meta" yolo)
       [ "$yolo" = on ] || yolo=off
       printf '%s\t%s\t%s\n' "$id" "$identity" "$(fm_pr_ready_reason "$id" "$yolo")"
@@ -219,5 +223,6 @@ fm_pr_ready_commit() {  # <state> <task-id> <identity>
   local state=$1 marker tmp
   marker=$(fm_pr_ready_marker_path "$state" "$2")
   tmp="$marker.tmp.${BASHPID:-$$}"
-  printf '%s\n' "$3" > "$tmp" && mv -f "$tmp" "$marker"
+  printf '%s\n' "$3" > "$tmp" && mv -f "$tmp" "$marker" || return 1
+  rm -f "$(fm_pr_ready_superseded_path "$state" "$2")"
 }
