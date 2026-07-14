@@ -59,9 +59,10 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_PAUSE_RESURFACE_SECS_DEFAULT=3600
 
-# The resolution verb that CLOSES a keyed decision opened by needs-decision or
-# blocked. See status_open_decisions below for the full durable-decision contract;
-# this is the one owner of the verb literal, overridable via FM_CLASSIFY_RESOLVE_VERB.
+# The resolution verb that CLOSES a keyed status lifecycle opened by
+# needs-decision, blocked, or paused.
+# See the durable keyed-status fold below for the full contract.
+# This is the one owner of the verb literal, overridable via FM_CLASSIFY_RESOLVE_VERB.
 FM_CLASSIFY_RESOLVE_VERB_DEFAULT='resolved'
 
 # Return the last non-blank line of a status file (empty if missing/blank).
@@ -96,24 +97,23 @@ status_is_paused() {  # <status-line>
   [ "$verb" = "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}" ]
 }
 
-# --- durable keyed decisions ------------------------------------------------
+# --- durable keyed status lifecycles ----------------------------------------
 #
-# The status stream is an append-only EVENT log. Reading it last-event-wins
-# (last_status_line above) cannot represent "an earlier decision is still open
-# after a later, unrelated event": a subsequent done/paused/working line silently
-# masks a still-open needs-decision. status_open_decisions is the ONE authoritative
-# statement of the contract that fixes this - a needs-decision/blocked line OPENS a
-# keyed decision, and ONLY an explicit resolution referencing that key CLOSES it; a
-# later unrelated terminal line never clears an open captain decision.
+# The status stream is an append-only EVENT log.
+# Reading it last-event-wins (last_status_line above) cannot represent an earlier keyed event that remains open after a later unrelated event.
+# _fm_status_open_events is the ONE authoritative fold that fixes this.
+# A configured opening verb opens or replaces its key, and only an explicit resolution referencing that key closes it.
+# status_open_decisions applies that fold to needs-decision/blocked events without mixing declared pauses into the captain-decision set.
+# status_open_pauses applies the same fold to declared external waits so an unrelated or mismatched resolution cannot silently end a pause.
 #
-# Decision key grammar (backward-compatible with the existing "<verb>: <note>"
-# format): an OPTIONAL "[key=<slug>]" token sits between the verb and the colon,
+# Key grammar is backward-compatible with the existing "<verb>: <note>" format.
+# An OPTIONAL "[key=<slug>]" token sits between the verb and the colon:
 #   needs-decision [key=api-shape]: <summary>
-#   resolved       [key=api-shape]: <how it was decided>
-# A line with no token uses the key "default", preserving the historical
-# one-open-decision-per-task behavior (a bare "resolved:" closes "default").
-# The three parsers are pure reads of a single line; the verb parser strips any
-# key token before the colon so the leading word is recovered cleanly.
+#   paused        [key=upstream-pr]: <known external wait>
+#   resolved      [key=upstream-pr]: <how it cleared>
+# A line with no token uses the key "default", preserving historical one-open-event-per-task behavior for unkeyed statuses.
+# The three parsers are pure reads of a single line.
+# The verb parser strips any key token before the colon so the leading word is recovered cleanly.
 status_line_verb() {  # <status-line> -> leading verb word
   local v=${1%%:*}
   v=${v%%\[key=*}
@@ -127,7 +127,7 @@ status_line_note() {  # <status-line> -> text after the first colon, trimmed
     *) printf '%s' "$1" ;;
   esac
 }
-_fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
+_fm_status_key() {  # <status-line> -> key slug, or "default" when no token
   local prefix=${1%%:*} k
   case "$prefix" in
     *\[key=*\]*)
@@ -141,50 +141,87 @@ _fm_decision_key() {  # <status-line> -> key slug, or "default" when no token
     *) printf 'default' ;;
   esac
 }
-# Drop the record for <key> from a newline-terminated "<key>\t<verb>\t<note>" set.
+# Drop the record for <key> from a newline-separated "<key>\t<verb>\t<note>" set.
 # Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
-_fm_decision_drop() {  # <open-set> <key>
+_fm_status_key_drop() {  # <open-set> <key>
   local set=$1 key=$2 line out=''
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in
       "$key"$'\t'*) : ;;
-      *) out="${out}${line}"$'\n' ;;
+      *) [ -n "$out" ] && out="${out}"$'\n'; out="${out}${line}" ;;
     esac
   done <<EOF
 $set
 EOF
   printf '%s' "$out"
 }
-# Fold the WHOLE status stream into the set of decisions still open. Prints one
-# TAB-separated "<key>\t<verb>\t<summary>" line per still-open decision, in
-# most-recently-opened-last order; prints nothing when none are open. Pure read of
-# the file, no globals beyond the optional FM_CLASSIFY_RESOLVE_VERB override. This
-# is the durable open-set the fleet snapshot and any point-in-time consumer must use
-# instead of trusting the last status line.
-status_open_decisions() {  # <status-file>
-  local f=$1 line verb key note resolve open='' stripped
+# Fold the WHOLE status stream for a space-separated set of opening verbs.
+# Prints one TAB-separated "<key>\t<verb>\t<note>" line per still-open event in most-recently-opened-last order.
+# Prints nothing when none are open.
+_fm_status_open_events() {  # <status-file> <space-separated-opening-verbs>
+  local f=$1 opening_verbs=$2 line verb key note resolve open='' stripped
   [ -f "$f" ] || return 0
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   while IFS= read -r line || [ -n "$line" ]; do
     stripped=${line//[[:space:]]/}
     [ -n "$stripped" ] || continue
     verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line") || continue
-    case "$verb" in
-      needs-decision|blocked)
+    key=$(_fm_status_key "$line") || continue
+    case " $opening_verbs " in
+      *" $verb "*)
         note=$(status_line_note "$line")
-        open=$(_fm_decision_drop "$open" "$key")
+        open=$(_fm_status_key_drop "$open" "$key")
         [ -n "$open" ] && open="${open}"$'\n'
-        open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
+        open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"
         ;;
-      "$resolve")
-        open=$(_fm_decision_drop "$open" "$key")
-        [ -n "$open" ] && open="${open}"$'\n'
+      *)
+        if [ "$verb" = "$resolve" ]; then
+          open=$(_fm_status_key_drop "$open" "$key")
+        fi
         ;;
     esac
   done < "$f"
   printf '%s' "$open"
+}
+# Durable captain-decision set used by the fleet snapshot and other point-in-time consumers.
+status_open_decisions() {  # <status-file>
+  _fm_status_open_events "$1" 'needs-decision blocked'
+}
+# Durable declared-external-wait set.
+# A matching resolved event closes a keyed pause; unrelated status events and resolutions for other keys do not.
+status_open_pauses() {  # <status-file>
+  _fm_status_open_events "$1" "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"
+}
+# Effective current pause, preserving last-state stale safety while allowing
+# decision-only events such as an unrelated resolution after the pause.
+# A later real state event (working/done/blocked/etc.) supersedes pause absorption
+# even if the crew omitted its resolution, so an old pause can never hide a stopped
+# or terminal crew.
+status_current_pause() {  # <status-file>
+  local f=$1 line verb current='' key open record
+  [ -f "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    verb=$(status_line_verb "$line")
+    if status_is_paused "$line"; then
+      current=$line
+      continue
+    fi
+    case "$verb" in
+      working|needs-decision|blocked|done|failed) current=$line ;;
+    esac
+  done < "$f"
+  status_is_paused "$current" || return 0
+  key=$(_fm_status_key "$current") || return 0
+  open=$(status_open_pauses "$f")
+  while IFS= read -r record; do
+    case "$record" in "$key"$'\t'*) printf '%s' "$record"; return 0 ;; esac
+  done <<EOF
+$open
+EOF
+}
+status_has_current_pause() {  # <status-file>
+  [ -n "$(status_current_pause "$1")" ]
 }
 
 # Fold material routed-work phases in the same keyed event stream.

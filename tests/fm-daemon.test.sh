@@ -314,15 +314,14 @@ test_housekeeping_paused_resumed_cleared() {
   pass "housekeeping clears a paused marker whose pane became busy again, without escalating"
 }
 
-# A pane still idle but whose status is no longer a pause (the crew changed state
-# without becoming busy) drops the marker - the signal path owns the new state, so
-# the pause recheck must not re-surface a stale pause reason.
+# A pane still idle whose keyed pause was explicitly resolved drops the marker.
+# The signal path owns the new state, so the pause recheck must not re-surface a stale pause reason.
 test_housekeeping_paused_unpaused_cleared() {
   local dir state fakebin win pane key
   dir=$(make_supercase paused-unpaused)
   state="$dir/state"; fakebin="$dir/fakebin"
   win="sess:fm-held-w13"; pane="$dir/pane.txt"
-  printf 'paused: holding for the upstream release\nworking: resumed, upstream landed\n' > "$state/held-w13.status"
+  printf 'paused [key=upstream]: holding for the upstream release\nresolved [key=upstream]: upstream landed\nworking: resumed\n' > "$state/held-w13.status"
   printf 'idle prompt $\n' > "$pane"
   key=$(printf '%s' "held-w13" | tr ':/.' '___')
   echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
@@ -330,7 +329,7 @@ test_housekeeping_paused_unpaused_cleared() {
     FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=240 housekeeping "$state"
   [ -e "$state/.subsuper-paused-$key" ] && fail "no-longer-paused marker was not cleared"
   [ ! -s "$state/.subsuper-escalations" ] || fail "a crew that left its pause was re-surfaced as a pause"
-  pass "housekeeping clears a paused marker once the crew is no longer declaring the pause"
+  pass "housekeeping clears a paused marker once the keyed pause is resolved"
 }
 
 test_housekeeping_stale_marker_transitions_to_pause() {

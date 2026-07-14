@@ -122,7 +122,7 @@ test_scan_captain_relevant_statuses_classifier() {
 }
 
 test_classifier_primitives() {
-  local dir state open activity
+  local dir state open activity pause
   dir=$(make_case classify-primitives); state="$dir/state"
   printf 'working: a\n\ndone: b\n\n' > "$state/x.status"
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
@@ -164,7 +164,19 @@ EOF
   printf 'working: legacy start\ndone: legacy completion\n' > "$state/legacy-activity.status"
   [ -z "$(status_open_activities "$state/legacy-activity.status")" ] \
     || fail "a legacy terminal event did not supersede the default working phase"
-  pass "classifier primitives: keyed decisions and activity phases, captain relevance, window-to-task, and overrides"
+  printf 'paused [key=upstream]: waiting on owner\nresolved [key=other]: unrelated wait cleared\n' > "$state/pause-keys.status"
+  pause=$(status_current_pause "$state/pause-keys.status")
+  printf '%s' "$pause" | grep -F $'upstream\tpaused\twaiting on owner' >/dev/null \
+    || fail "an unrelated keyed resolution closed or hid the current pause"
+  printf 'working: resumed without a resolution\n' >> "$state/pause-keys.status"
+  status_has_current_pause "$state/pause-keys.status" \
+    && fail "a later working state left an old pause effective (stale-safety regression)"
+  status_open_pauses "$state/pause-keys.status" | grep -F $'upstream\t' >/dev/null \
+    || fail "a later state event incorrectly closed the durable keyed pause"
+  printf 'resolved [key=upstream]: owner merged\n' >> "$state/pause-keys.status"
+  [ -z "$(status_open_pauses "$state/pause-keys.status")" ] \
+    || fail "a matching keyed resolution did not close the durable pause"
+  pass "classifier primitives: keyed decisions, pauses, and activity phases, captain relevance, window-to-task, and overrides"
 }
 
 # crew_is_provably_working: the absorb-only-when-provably-working predicate. It is
@@ -547,13 +559,14 @@ test_nonterminal_stale_not_working_surfaced() {
 
 # --- non-terminal stale, crew DECLARED a pause: absorbed, re-surfaced on a long
 #     cadence, never wedge-escalated ------------------------------------------
-# The live 2026-07-09/10 case: a crew intentionally held awaiting an upstream tool
-# release (paused: ...) whose idle pane tripped repeated possible-wedge escalations
-# all day. With the paused verb, its stale is absorbed like a working crew but never
-# uses the wedge timer; it re-surfaces once past PAUSE_RESURFACE_SECS (anchored on
-# the pause's own status-file age, so a churny idle pane cannot reset the cadence)
+# Regression for the green PR #537 external wait: checks-passed merge monitoring
+# is reconciled by fm-crew-state as paused, and the keyed pause remains open even
+# when a later resolution closes some other key. The watcher must retain pause
+# tracking across repeated polls instead of surfacing stale every few polls or
+# starting a wedge timer. It still re-surfaces once past PAUSE_RESURFACE_SECS
+# (anchored on the status-file age, so a churny idle pane cannot reset the cadence)
 # for a recheck, so a forgotten pause cannot rot invisibly.
-test_nonterminal_stale_paused_absorbed_then_resurfaced() {
+test_green_external_wait_stale_absorbed_repeatedly_then_resurfaced() {
   local dir state fakebin out drain_out capture_file window key pane_hash sig pid back statusf
   dir=$(make_case nonterminal-stale-paused); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
@@ -561,16 +574,19 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   printf 'idle, holding for upstream' > "$capture_file"
   printf 'window=%s\nkind=ship\n' "$window" > "$state/held.meta"
   statusf="$state/held.status"
-  # A DECLARED pause (not captain-relevant), .seen-* primed so the signal scan does
-  # not pre-empt the stale path.
-  printf 'paused: holding for the upstream tool release\n' > "$statusf"
+  # A DECLARED keyed pause (not captain-relevant), followed by an unrelated keyed
+  # resolution. The pause fold must keep the external wait current even though the
+  # last line itself is not paused. Prime .seen-* so the signal scan does not
+  # pre-empt the stale path.
+  printf 'paused [key=upstream-owner-pr-537]: PR 537 is green and awaiting its upstream owner\n' > "$statusf"
+  printf 'resolved [key=other]: unrelated wait cleared\n' >> "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
   key=$(printf '%s' "$window" | tr ':/.' '___')
   pane_hash=$(hash_text "idle, holding for upstream")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  # crew_absorb_class reads the declared pause from fm-crew-state.sh.
-  export FM_FAKE_CREW_STATE='state: paused · source: status-log · holding for the upstream tool release'
+  # crew_absorb_class reads the reconciled green external wait from fm-crew-state.sh.
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · PR 537 is green and awaiting its upstream owner · checks green: still monitoring for merge/close'
 
   # Phase A: a fresh pause (status file just written) under a high re-surface
   # threshold is absorbed - no wake, no wedge timer.
@@ -609,7 +625,7 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   [ ! -e "$state/.stale-since-$key" ] || fail "a paused re-surface must not use the wedge timer"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the paused re-surface failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "paused re-surface was not queued"
-  pass "a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated"
+  pass "a green external wait is absorbed across repeated stale polls, then re-surfaced on the bounded pause cadence"
 }
 
 test_secondmate_paused_resurfaces_in_normal_mode() {
@@ -1137,7 +1153,7 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_nonterminal_stale_not_working_surfaced
-test_nonterminal_stale_paused_absorbed_then_resurfaced
+test_green_external_wait_stale_absorbed_repeatedly_then_resurfaced
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed
 test_secondmate_unpause_clears_pause_tracking

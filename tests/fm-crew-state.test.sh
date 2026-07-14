@@ -13,6 +13,7 @@
 #   (b) needs-decision/blocked log + resumed run = SUPERSEDED     -> run-step
 #   (c) genuine parked run + needs-decision log = NOT superseded  -> run-step
 #   (d) terminal run-step (passed/failed) is authoritative        -> run-step
+#   (d') unresolved pause overrides only green merge/close monitoring
 #   (e) cross-branch attribution: this branch's own run found via list lookup
 #   (f) no run + busy pane                                        -> pane
 #   (g) no run + idle pane falls to the status-log verb           -> status-log
@@ -267,6 +268,19 @@ outcome: passed
 EOF
 }
 
+run_checks_passed() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: ci
+  head: "abc1234"
+  pr: "https://github.com/o/r/pull/1"
+  findings: none
+outcome: checks-passed
+EOF
+}
+
 run_failed() {  # <branch>
   cat <<EOF
 run:
@@ -277,6 +291,19 @@ run:
   pr: ""
   findings: none
 outcome: failed
+EOF
+}
+
+run_cancelled() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: completed
+  head: "abc1234"
+  pr: ""
+  findings: none
+outcome: cancelled
 EOF
 }
 
@@ -486,6 +513,96 @@ test_top_level_ci_checks_green_surfaces_done() {
   assert_contains "$out" "checks green" "top-level ci green detail mentions checks green"
   assert_not_contains "$out" "state: working" "top-level ci green must not stay working"
   pass "top-level ci status uses ci log green marker"
+}
+
+test_checks_passed_run_with_keyed_pause_reports_paused_until_resolved() {
+  reset_fakes
+  local d out; d=$(new_case checks-passed-paused)
+  make_repo_on_branch "$d/wt" fm/feat-upstream-wait
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-upstream-wait.meta" "window=fm:fm-feat-upstream-wait" "worktree=$d/wt" "kind=ship"
+  printf 'paused [key=upstream-owner-pr-537]: PR 537 is green and awaiting its upstream owner\n' > "$d/state/feat-upstream-wait.status"
+  FM_FAKE_AXI_STATUS="$(run_checks_passed fm/feat-upstream-wait)"
+
+  out=$(run_crew_state "$d" feat-upstream-wait)
+  assert_contains "$out" "state: paused" "checks-passed plus unresolved pause -> paused"
+  assert_contains "$out" "source: status-log" "declared pause owns the checks-passed external wait"
+  assert_contains "$out" "awaiting its upstream owner" "paused state preserves the external-wait reason"
+  assert_contains "$out" "still monitoring for merge/close" "paused state identifies the underlying green monitor"
+
+  printf 'resolved [key=some-other-wait]: unrelated dependency cleared\n' >> "$d/state/feat-upstream-wait.status"
+  out=$(run_crew_state "$d" feat-upstream-wait)
+  assert_contains "$out" "state: paused" "mismatched resolution must not close the keyed pause"
+
+  printf 'resolved [key=upstream-owner-pr-537]: upstream owner merged PR 537\n' >> "$d/state/feat-upstream-wait.status"
+  out=$(run_crew_state "$d" feat-upstream-wait)
+  assert_contains "$out" "state: done" "matching resolution restores checks-passed state"
+  assert_contains "$out" "source: run-step" "resolved pause restores the underlying run source"
+  assert_not_contains "$out" "state: paused" "resolved keyed pause no longer masks the run"
+  pass "checks-passed external wait stays paused until its matching keyed resolution"
+}
+
+test_ci_green_monitor_with_pause_reports_paused() {
+  reset_fakes
+  local d out; d=$(new_case ci-green-paused)
+  make_repo_on_branch "$d/wt" fm/feat-green-wait
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-green-wait.meta" "window=fm:fm-feat-green-wait" "worktree=$d/wt" "kind=ship"
+  printf 'paused [key=owner]: awaiting upstream owner\n' > "$d/state/feat-green-wait.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-green-wait)"
+  FM_FAKE_CI_LOGS="all CI checks passed - still monitoring until merged or closed"
+  out=$(run_crew_state "$d" feat-green-wait)
+  assert_contains "$out" "state: paused" "green ci-monitor plus unresolved pause -> paused"
+  assert_contains "$out" "awaiting upstream owner" "green monitor pause preserves its reason"
+  pass "ci-log-derived green merge monitoring honors a declared external wait"
+}
+
+test_pause_does_not_mask_authoritative_active_or_terminal_run_states() {
+  reset_fakes
+  local d out; d=$(new_case pause-run-precedence)
+  make_repo_on_branch "$d/wt" fm/feat-pause-precedence
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-pause-precedence.meta" "window=fm:fm-feat-pause-precedence" "worktree=$d/wt" "kind=ship"
+  printf 'paused [key=upstream]: awaiting upstream owner\n' > "$d/state/feat-pause-precedence.status"
+
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-pause-precedence)"
+  out=$(run_crew_state "$d" feat-pause-precedence)
+  assert_contains "$out" "state: working" "active running step outranks pause"
+
+  FM_FAKE_AXI_STATUS="$(run_ci_fixing fm/feat-pause-precedence)"
+  FM_FAKE_CI_LOGS="all CI checks passed - still monitoring until merged or closed"
+  out=$(run_crew_state "$d" feat-pause-precedence)
+  assert_contains "$out" "state: working" "active CI fixing outranks pause"
+
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-pause-precedence)"
+  FM_FAKE_CI_LOGS=$(cat <<'EOF'
+all CI checks passed - still monitoring until merged or closed
+base branch advanced (aaaaaaa..bbbbbbb), re-arming CI monitor timeout
+CI checks running, waiting for results...
+EOF
+)
+  out=$(run_crew_state "$d" feat-pause-precedence)
+  assert_contains "$out" "state: working" "rearmed CI outranks pause"
+  assert_not_contains "$out" "state: paused" "rearmed CI is not hidden by an old pause"
+
+  FM_FAKE_AXI_STATUS="$(run_parked fm/feat-pause-precedence)"
+  out=$(run_crew_state "$d" feat-pause-precedence)
+  assert_contains "$out" "state: parked" "parked gate outranks pause"
+
+  FM_FAKE_AXI_STATUS="$(run_failed fm/feat-pause-precedence)"
+  out=$(run_crew_state "$d" feat-pause-precedence)
+  assert_contains "$out" "state: failed" "failed outcome outranks pause"
+
+  FM_FAKE_AXI_STATUS="$(run_cancelled fm/feat-pause-precedence)"
+  out=$(run_crew_state "$d" feat-pause-precedence)
+  assert_contains "$out" "state: failed" "cancelled outcome outranks pause"
+
+  FM_FAKE_AXI_STATUS="$(run_passed fm/feat-pause-precedence)"
+  out=$(run_crew_state "$d" feat-pause-precedence)
+  assert_contains "$out" "state: done" "terminal passed outcome outranks pause"
+  assert_contains "$out" "PR merged/closed" "terminal passed detail remains intact"
+  assert_not_contains "$out" "state: paused" "merged/closed outcome is never masked by a pause"
+  pass "declared pause cannot mask active work, gates, CI relapse, failure, cancellation, or terminal passed"
 }
 
 test_ci_monitoring_no_checks_terminal_surfaces_done() {
@@ -1144,6 +1261,9 @@ test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
 test_ci_monitoring_checks_green_surfaces_done
 test_top_level_ci_checks_green_surfaces_done
+test_checks_passed_run_with_keyed_pause_reports_paused_until_resolved
+test_ci_green_monitor_with_pause_reports_paused
+test_pause_does_not_mask_authoritative_active_or_terminal_run_states
 test_ci_monitoring_no_checks_terminal_surfaces_done
 test_ci_monitoring_green_then_rearm_stays_working
 test_ci_monitoring_no_checks_yet_stays_working

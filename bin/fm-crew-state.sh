@@ -23,11 +23,14 @@
 #      (from `axi status`, or the coarse `no-mistakes runs` fallback)?
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
-#      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
-#      the active step is ci, `axi status` alone cannot tell "still waiting on
-#      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
-#      a ci-step log-tail check overrides working -> done once checks read
-#      green, so a green PR is never silently read as still-validating.
+#      passed/checks-passed -> done, failed/cancelled -> failed.
+#      A fresh unresolved declared pause may override only checks-passed/green CI
+#      that is merely monitoring merge/close; active work, parked gates, relapsed
+#      CI, failures, and merged/closed passed outcomes retain run-step precedence.
+#      While the active step is ci, `axi status` alone cannot tell "still waiting
+#      on checks" from "checks green, waiting on merge" (see nm_ci_checks_state).
+#      A ci-step log-tail check overrides working -> done once checks read green,
+#      so a green PR is never silently read as still-validating.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -125,6 +128,14 @@ map_log_state() {  # <line>
 
 LOG_LINE=$(log_last_line || true)
 LOG_VERB=$(status_line_verb "$LOG_LINE")
+# A pause is a keyed lifecycle, not a last-line verb.
+# The shared fold keeps it current across unrelated decision-only events and closes it on a matching resolved event.
+OPEN_PAUSE=$(status_current_pause "$LOG")
+OPEN_PAUSE_NOTE=""
+if [ -n "$OPEN_PAUSE" ]; then
+  OPEN_PAUSE_NOTE=${OPEN_PAUSE#*$'\t'}
+  OPEN_PAUSE_NOTE=${OPEN_PAUSE_NOTE#*$'\t'}
+fi
 
 # pane_readable is consulted ONLY in the no-run fallback below. The run-step path
 # stays authoritative regardless of pane liveness - judge by the run-step, not the
@@ -432,6 +443,7 @@ if [ "$HAVE_RUN" = 1 ]; then
   CI_STEP_STATUS=""
   CI_LOG_STATE=""
   RUN_STATUS=""
+  RUN_PAUSEABLE=0
   if [ "$RUN_SOURCE" = coarse ]; then
     # No step/gate detail is available from the plain runs list - only ever
     # true/working, done, or failed. A crew genuinely parked at a gate still
@@ -459,7 +471,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     if [ -n "$outcome" ]; then
       case "$outcome" in
         passed)        RUN_STATE="done"; RUN_DETAIL="run passed: PR merged/closed" ;;
-        checks-passed) RUN_STATE="done"; RUN_DETAIL="checks green: PR ready for review" ;;
+        checks-passed) RUN_STATE="done"; RUN_DETAIL="checks green: PR ready for review (still monitoring for merge/close)"; RUN_PAUSEABLE=1 ;;
         failed)        RUN_STATE=failed; RUN_DETAIL="run failed" ;;
         cancelled)     RUN_STATE=failed; RUN_DETAIL="run cancelled" ;;
         *)             RUN_STATE=unknown; RUN_DETAIL="outcome: $outcome" ;;
@@ -497,6 +509,7 @@ if [ "$HAVE_RUN" = 1 ]; then
             if [ "$CI_LOG_STATE" = green ]; then
               RUN_STATE="done"
               RUN_DETAIL="checks green: PR ready for review (still monitoring for merge/close)"
+              RUN_PAUSEABLE=1
             fi
             ;;
           fixing)
@@ -505,6 +518,14 @@ if [ "$HAVE_RUN" = 1 ]; then
         esac
       fi
     fi
+  fi
+
+  # A declared external wait is authoritative only over the non-terminal green
+  # monitor state.
+  # It must never hide active validation, a gate, a CI relapse/fix, failure, or a
+  # truly terminal merged/closed outcome.
+  if [ "$RUN_PAUSEABLE" = 1 ] && [ -n "$OPEN_PAUSE" ]; then
+    emit paused status-log "$OPEN_PAUSE_NOTE${SEP}$RUN_DETAIL"
   fi
 
   if [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
@@ -556,10 +577,18 @@ if [ "$KIND" != secondmate ] && crew_pane_is_busy "$BACKEND_TARGET"; then
   emit working pane "harness busy"
 fi
 
+# An unresolved pause remains current across unrelated events and mismatched
+# resolutions.
+# Active pane work above still outranks it, and a matching keyed resolution makes
+# OPEN_PAUSE empty so the underlying fallback is restored.
+if [ -n "$OPEN_PAUSE" ]; then
+  emit paused status-log "$OPEN_PAUSE_NOTE"
+fi
+
 # Fall back to the status log's last line, but ONLY when its verb maps to a real
 # run-state. A decision-closing event - resolved: (fm-classify-lib.sh's
 # FM_CLASSIFY_RESOLVE_VERB), and any future decision-only sibling - is NOT a state:
-# it exists solely to CLOSE a keyed decision in the durable fold, so a trailing
+# it exists solely to CLOSE a keyed lifecycle in the durable fold, so a trailing
 # resolved: must never become the current state or leak its resolution prose as the
 # detail. Skipping it lets a just-resolved idle crew (typically a secondmate, which
 # has no busy check above) fall through to the idle default instead of rendering

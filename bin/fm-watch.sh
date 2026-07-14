@@ -344,13 +344,12 @@ clear_pause_tracking() {  # <window>
 }
 
 pause_state_class() {  # <window> <task>
-  local win=$1 task=$2 key last recheck_file class
+  local win=$1 task=$2 key recheck_file class
   key=${win//:/_}
   key=${key//\//_}
   key=${key//./_}
-  last=$(last_status_line "$STATE/$task.status")
   recheck_file="$STATE/.paused-rechecked-$key"
-  if ! status_is_paused "$last"; then
+  if ! status_has_current_pause "$STATE/$task.status"; then
     rm -f "$recheck_file"
     crew_absorb_class "$task"
     return
@@ -562,7 +561,7 @@ handle_push_transition() {  # <backend> <session> <record>
   [ -n "$pane_id" ] || { sleep 1; return; }
   window="$session:$pane_id"
   task=$(window_to_task "$window" "$STATE")
-  if status_is_paused "$(last_status_line "$STATE/$task.status")"; then
+  if status_has_current_pause "$STATE/$task.status"; then
     triage_log "absorbed push $to (declared pause, awaiting external): $window"
     fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
     return
@@ -714,11 +713,12 @@ EOF
     key=${w//:/_}
     key=${key//\//_}
     key=${key//./_}
-    last=$(last_status_line "$STATE/$task.status")
-    if ! status_is_paused "$last" && [ -e "$STATE/.paused-$key" ]; then
+    pause_open=0
+    status_has_current_pause "$STATE/$task.status" && pause_open=1
+    if [ "$pause_open" != 1 ] && [ -e "$STATE/.paused-$key" ]; then
       clear_pause_tracking "$w"
     fi
-    if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
+    if [ "$kind" = secondmate ] && [ "$pause_open" != 1 ]; then
       continue
     fi
     tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
@@ -823,7 +823,7 @@ EOF
             esac
           else
             task=$(window_to_task "$w" "$STATE")
-            if [ -e "$pf" ] || status_is_paused "$(last_status_line "$STATE/$task.status")"; then
+            if [ -e "$pf" ] || [ "$pause_open" = 1 ]; then
               case "$(pause_state_class "$w" "$task")" in
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) clear_pause_state "$w"
@@ -840,7 +840,7 @@ EOF
       else
         # Pane busy or not yet stably stale: reset pending escalation bookkeeping.
         rm -f "$ssf" "$ewf"
-        if [ -e "$pf" ] && { [ "$n" -ge 2 ] || ! status_is_paused "$(last_status_line "$STATE/$(window_to_task "$w" "$STATE").status")"; }; then
+        if [ -e "$pf" ] && { [ "$n" -ge 2 ] || [ "$pause_open" != 1 ]; }; then
           clear_pause_tracking "$w"
         fi
       fi
@@ -849,7 +849,7 @@ EOF
       echo 0 > "$cf"
       rm -f "$ssf" "$ewf"
       task=$(window_to_task "$w" "$STATE")
-      if ! afk_present && status_is_paused "$(last_status_line "$STATE/$task.status")" && ! window_is_busy "$w" "$tail40"; then
+      if ! afk_present && [ "$pause_open" = 1 ] && ! window_is_busy "$w" "$tail40"; then
         case "$(pause_state_class "$w" "$task")" in
           paused) handle_paused_stale "$w" "$task" "$h" ;;
           *)      clear_pause_tracking "$w" ;;
