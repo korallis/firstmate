@@ -7,8 +7,9 @@
 # ready, and returns one actionable transition record at a time.
 #
 # A per-task state/.pr-ready-<id> marker suppresses the same readiness identity
-# across watcher generations. The identity includes the branch HEAD and canonical
-# current-state line. Any observed authoritative re-arm, failed check, pause, gate,
+# across watcher generations. The identity is the stable branch and branch HEAD,
+# never volatile rendered current-state detail. Any observed authoritative re-arm,
+# failed check, pause, gate,
 # or other non-ready state clears the marker so a later green state re-surfaces;
 # an unknown/unreadable state preserves it rather than manufacturing a duplicate
 # from a transient read error.
@@ -49,12 +50,25 @@ fm_pr_ready_verdict() {  # <crew-state-line>
   esac
 }
 
-fm_pr_ready_identity() {  # <meta> <crew-state-line>
-  local meta=$1 line=$2 wt branch head
+fm_pr_ready_identity() {  # <meta>
+  local meta=$1 wt branch head
   wt=$(fm_pr_ready_meta_value "$meta" worktree)
   branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   head=$(git -C "$wt" rev-parse HEAD 2>/dev/null || true)
-  printf '%s|%s|%s' "${branch:-unknown-branch}" "${head:-unknown-head}" "$line"
+  printf '%s|%s' "${branch:-unknown-branch}" "${head:-unknown-head}"
+}
+
+fm_pr_ready_status_reports_ready() {  # <status-line>
+  local line=$1 verb note
+  verb=${line%%:*}
+  verb=${verb%%\[key=*}
+  verb=${verb#"${verb%%[![:space:]]*}"}
+  verb=${verb%"${verb##*[![:space:]]}"}
+  [ "$verb" = done ] || return 1
+  case "$line" in
+    *PR*"checks green"*|*"checks green"*PR*) return 0 ;;
+  esac
+  return 1
 }
 
 fm_pr_ready_reason() {  # <task-id> <yolo>
@@ -86,7 +100,7 @@ fm_pr_ready_transition() {  # <state> <task-id>
       return 1
       ;;
     ready)
-      identity=$(fm_pr_ready_identity "$meta" "$line")
+      identity=$(fm_pr_ready_identity "$meta")
       prior=$(cat "$marker" 2>/dev/null || true)
       [ "$prior" = "$identity" ] && return 1
       yolo=$(fm_pr_ready_meta_value "$meta" yolo)

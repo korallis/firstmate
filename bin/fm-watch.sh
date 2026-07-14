@@ -291,6 +291,27 @@ pr_ready_recheck() {  # <window>
   touch "$scan_file"
 }
 
+# A current done/checks-green status signal already makes readiness actionable.
+# After that signal is durably queued, persist its authoritative run identity so
+# the next watcher generation does not emit a second readiness wake.
+mark_pr_ready_status_signals() {  # <pending-signal-records>
+  local pending=$1 sf sig f line task record ready_id ready_identity
+  while IFS=$(printf '\t') read -r sf sig f; do
+    [ -n "$sf" ] || continue
+    case "$f" in "$STATE"/*.status) ;; *) continue ;; esac
+    line=$(last_status_line "$f")
+    fm_pr_ready_status_reports_ready "$line" || continue
+    task=$(basename "$f" .status)
+    record=$(fm_pr_ready_transition "$STATE" "$task" || true)
+    [ -n "$record" ] || continue
+    IFS=$'\t' read -r ready_id ready_identity _ <<< "$record"
+    [ "$ready_id" = "$task" ] || continue
+    fm_pr_ready_commit "$STATE" "$ready_id" "$ready_identity" || exit 1
+  done <<EOF
+$pending
+EOF
+}
+
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
@@ -712,6 +733,7 @@ EOF
       done <<EOF
 $pending
 EOF
+      mark_pr_ready_status_signals "$pending"
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         printf '%s' "$sig" > "$sf"

@@ -11,6 +11,7 @@ set -u
 WATCH="$ROOT/bin/fm-watch.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-ready-wake-tests)
 READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close)'
+ALT_READY_LINE='state: done · source: run-step · checks green: PR ready for review · status-log event superseded by authoritative run'
 WORKING_LINE='state: working · source: run-step · ci running'
 FAILED_LINE='state: failed · source: run-step · run failed'
 PAUSED_GREEN_LINE='state: paused · source: status-log · awaiting upstream owner · checks green: PR ready for review (still monitoring for merge/close)'
@@ -117,6 +118,68 @@ test_duplicate_suppression_across_watcher_generations() {
     bash -c '. "$1"; fm_pr_ready_transition "$2" generation || true' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state")
   [ -z "$second" ] || fail "second watcher generation duplicated the same readiness identity"
   pass "persistent readiness identity suppresses duplicates across watcher generations"
+}
+
+test_volatile_ready_detail_does_not_wake_again() {
+  local dir state fakebin record state_line out pid
+  dir=$(make_case volatile-ready-detail); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" volatile-ready off
+  record=$(next_ready "$state" "$fakebin" volatile-ready "$READY_LINE")
+  commit_record "$state" "$record"
+  state_line="$dir/crew-state"
+  printf '%s\n' "$ALT_READY_LINE" > "$state_line"
+  install_dynamic_crew_state "$fakebin"
+  printf 'Working...\n' > "$dir/pane"
+  out="$dir/watch.out"
+  FM_FAKE_CREW_STATE_FILE="$state_line" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  sleep 2.5
+  kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; fail "volatile ready detail emitted a duplicate wake"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "volatile ready detail printed a wake reason: $(cat "$out")"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "volatile ready detail queued a duplicate wake"; }
+  reap "$pid"
+  pass "watcher deduplicates volatile ready detail for the same branch head"
+}
+
+test_done_status_seeds_next_generation_dedupe() {
+  local dir state fakebin first_out second_out pid
+  dir=$(make_case done-status-dedupe); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" status-ready off
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/status-ready.status"
+  printf 'Working...\n' > "$dir/pane"
+  first_out="$dir/first.out"
+  FM_FAKE_CREW_STATE="$READY_LINE" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$first_out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "done/checks-green status did not wake"; }
+  grep -F 'signal:' "$first_out" >/dev/null || fail "done/checks-green status did not use the signal path"
+  grep -F 'authoritative PR-ready transition' "$first_out" >/dev/null \
+    && fail "done/checks-green status emitted a second readiness reason in its generation"
+  [ -s "$state/.pr-ready-status-ready" ] \
+    || fail "done/checks-green signal did not persist the authoritative readiness marker"
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2>&1 \
+    || fail "wake drain failed after done/checks-green signal"
+
+  second_out="$dir/second.out"
+  FM_FAKE_CREW_STATE="$ALT_READY_LINE" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$second_out" &
+  pid=$!
+  sleep 2.5
+  kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; fail "next watcher generation duplicated status-reported readiness"; }
+  [ ! -s "$second_out" ] || { reap "$pid"; fail "next generation printed a duplicate wake: $(cat "$second_out")"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "next generation queued duplicate readiness"; }
+  reap "$pid"
+  pass "done/checks-green signal suppresses duplicate readiness in the next watcher generation"
 }
 
 test_relapse_rearm_and_head_change_supersede_green() {
@@ -257,6 +320,8 @@ test_keyed_pause_precedence_and_stale_absorption() {
 
 test_background_ci_fixer_wakes_before_stale_status
 test_duplicate_suppression_across_watcher_generations
+test_volatile_ready_detail_does_not_wake_again
+test_done_status_seeds_next_generation_dedupe
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
 test_changing_pane_failure_is_observed_by_task_scan
