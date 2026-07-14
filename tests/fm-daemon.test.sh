@@ -196,7 +196,7 @@ test_stale_pause_yields_to_authoritative_run_states() {
   out=$(FM_STATE_OVERRIDE="$state" FM_TEST_CREW_STATE=working classify_stale "sess:fm-held-precedence" "$state")
   case "$out" in self\|*) ;; *) fail "active work behind a pause did not self-handle as working: $out" ;; esac
 
-  for current in parked blocked failed done; do
+  for current in parked blocked failed 'done'; do
     out=$(FM_STATE_OVERRIDE="$state" FM_TEST_CREW_STATE="$current" classify_stale "sess:fm-held-precedence" "$state")
     case "$out" in escalate\|*"$current"*) ;; *) fail "authoritative $current state was hidden by an open pause: $out" ;; esac
   done
