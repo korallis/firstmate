@@ -68,6 +68,7 @@ case "${1:-}" in
         if [ "${1:-}" = --run ]; then printf '%s\n' "${FM_FAKE_AXI_STATUS_RUN:-}"
         else printf '%s\n' "${FM_FAKE_AXI_STATUS:-}"; fi ;;
       logs)
+        [ -z "${FM_FAKE_CI_LOG_ARGS_FILE:-}" ] || printf '%s\n' "$*" > "$FM_FAKE_CI_LOG_ARGS_FILE"
         printf '%s\n' "${FM_FAKE_CI_LOGS:-}" ;;
     esac
     ;;
@@ -159,8 +160,10 @@ reset_fakes() {
   FM_FAKE_HERDR_MISSING=0
   FM_FAKE_HERDR_AGENT_STATUS=""
   FM_FAKE_CI_LOGS=""
+  FM_FAKE_CI_LOG_ARGS_FILE=""
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_TMUX_MISSING
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_CI_LOGS
+  export FM_FAKE_CI_LOG_ARGS_FILE
 }
 
 # --- run-object fixtures (TOON, as `no-mistakes axi status` emits) -----------
@@ -483,75 +486,28 @@ EOF
   assert_contains "$out" "state: done" "green ci-monitor run -> done"
   assert_contains "$out" "source: run-step" "green ci-monitor -> run-step source"
   assert_contains "$out" "checks green" "green ci-monitor detail mentions checks green"
-  assert_contains "$out" "run-identity: 01RUN|" "green ci-monitor exposes stable run generation"
+  assert_contains "$out" "run-identity: 01RUN" "green ci-monitor exposes stable run identity"
+  assert_not_contains "$out" "run-identity: 01RUN|" "green ci-monitor does not derive identity from historical logs"
   assert_not_contains "$out" "state: working" "green ci-monitor must not read as still validating"
   pass "ci-monitoring run with checks already green surfaces done"
 }
 
-test_checks_passed_unknown_generation_is_progressive() {
+test_ci_log_read_is_bounded() {
   reset_fakes
-  local d first second first_identity second_identity
-  d=$(new_case checks-passed-progressive)
-  make_repo_on_branch "$d/wt" fm/feat-checkspassed
+  local d out args_file
+  d=$(new_case ci-bounded-log)
+  make_repo_on_branch "$d/wt" fm/feat-cibounded
   make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-checkspassed.meta" "window=fm:fm-feat-checkspassed" "worktree=$d/wt" "kind=ship"
-  FM_FAKE_AXI_STATUS="$(run_checks_passed fm/feat-checkspassed)"
-  FM_FAKE_CI_LOGS=""
-  first=$(run_crew_state "$d" feat-checkspassed)
-  first_identity=${first#*run-identity: }
-  first_identity=${first_identity%% *}
-  [ "$first_identity" = 01RUN ] || fail "unknown CI generation was rendered as unstable identity: $first_identity"
-  FM_FAKE_CI_LOGS=$(cat <<'EOF'
-CI checks running, waiting for results...
-all CI checks passed - still monitoring until merged or closed
-EOF
-)
-  second=$(run_crew_state "$d" feat-checkspassed)
-  second_identity=${second#*run-identity: }
-  second_identity=${second_identity%% *}
-  [ "$second_identity" = '01RUN|baseline' ] \
-    || fail "first readable green history did not refine to baseline: $second_identity"
-  pass "checks-passed identity refines without an unknown generation sentinel"
-}
-
-test_ci_monitor_generation_records_transient_relapse() {
-  reset_fakes
-  local d first second repeated first_identity second_identity repeated_identity
-  d=$(new_case ci-transient-relapse)
-  make_repo_on_branch "$d/wt" fm/feat-citransient
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-citransient.meta" "window=fm:fm-feat-citransient" "worktree=$d/wt" "kind=ship"
-  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-citransient)"
-  FM_FAKE_CI_LOGS=$(cat <<'EOF'
-CI checks running, waiting for results...
-all CI checks passed - still monitoring until merged or closed
-EOF
-)
-  first=$(run_crew_state "$d" feat-citransient)
-  first_identity=${first#*run-identity: }
-  first_identity=${first_identity%% *}
-  FM_FAKE_CI_LOGS=$(cat <<'EOF'
-CI checks running, waiting for results...
-all CI checks passed - still monitoring until merged or closed
-issues detected: merge conflict - auto-fixing (attempt 2/10)...
-CI checks running, waiting for results...
-all CI checks passed - still monitoring until merged or closed
-EOF
-)
-  second=$(run_crew_state "$d" feat-citransient)
-  second_identity=${second#*run-identity: }
-  second_identity=${second_identity%% *}
-  case "$first_identity:$second_identity" in
-    '01RUN|baseline:01RUN|relapse-'*) ;;
-    *) fail "transient relapse did not advance from baseline: $first_identity -> $second_identity" ;;
-  esac
-  FM_FAKE_CI_LOGS="$FM_FAKE_CI_LOGS
-all CI checks passed - still monitoring until merged or closed"
-  repeated=$(run_crew_state "$d" feat-citransient)
-  repeated_identity=${repeated#*run-identity: }
-  repeated_identity=${repeated_identity%% *}
-  [ "$second_identity" = "$repeated_identity" ] || fail "repeated green wording changed the CI-monitor generation"
-  pass "CI-monitor generation records transient relapse without green-only volatility"
+  fm_write_meta "$d/state/feat-cibounded.meta" "window=fm:fm-feat-cibounded" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-cibounded)"
+  FM_FAKE_CI_LOGS="all CI checks passed - still monitoring until merged or closed"
+  args_file="$d/ci-log-args"
+  FM_FAKE_CI_LOG_ARGS_FILE=$args_file
+  out=$(run_crew_state "$d" feat-cibounded)
+  assert_contains "$out" "state: done" "bounded green ci log -> done"
+  assert_contains "$(cat "$args_file")" "logs --step ci --run 01RUN" "ci state uses the normal bounded log read"
+  assert_not_contains "$(cat "$args_file")" "--full" "ci state does not request the full historical log"
+  pass "ci readiness uses one bounded current-state log read"
 }
 
 test_top_level_ci_checks_green_surfaces_done() {
@@ -1225,8 +1181,7 @@ test_scalar_gate_parked_not_superseded
 test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
 test_ci_monitoring_checks_green_surfaces_done
-test_checks_passed_unknown_generation_is_progressive
-test_ci_monitor_generation_records_transient_relapse
+test_ci_log_read_is_bounded
 test_top_level_ci_checks_green_surfaces_done
 test_ci_monitoring_no_checks_terminal_surfaces_done
 test_ci_monitoring_green_then_rearm_stays_working

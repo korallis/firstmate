@@ -26,9 +26,9 @@
 #      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
-#      a ci-step log check overrides working -> done once checks read green and
-#      emits a stable run generation, so a green PR is never silently read as
-#      still-validating and an intervening relapse remains observable.
+#      a bounded ci-step log check overrides working -> done once checks read
+#      green, so a green PR is never silently read as still-validating and an
+#      observed intervening relapse remains authoritative.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -322,35 +322,24 @@ nm_effective_ci_step_status() {
 # monitoring until merged or closed" or "no CI checks reported - still
 # monitoring until merged or closed" (verified against 360+ real run logs under
 # ~/.no-mistakes/logs/*/ci.log on the installed v1.32.2 binary, including the
-# actual PR #252 run). Reads the full ci step log via `axi logs --full`, scans
-# the most recent recognized marker for current state, and hashes only non-ready
-# markers observed after the first green marker into a stable monitor generation.
-# Initial pre-green work refines to `baseline`; a failed check or re-arm after
-# green changes to a relapse generation even if green returns before the next scan.
-nm_ci_checks_snapshot() {
-  local run_id log marker relapse generation result
+# actual PR #252 run). Reads the ci step's bounded log tail via `axi logs` and
+# scans the most recent recognized marker for current state. Persistent
+# readiness supersession is owned by fm-pr-ready-lib.sh, so this helper does not
+# rescan or retain the growing historical log.
+nm_ci_checks_state() {
+  local run_id log_tail marker
   run_id=$(strip_quotes "$(nm_field id)")
-  [ -n "$run_id" ] || { printf 'unknown|unknown'; return; }
-  log=$(nm_run axi logs --full --step ci --run "$run_id") || true
-  [ -n "$log" ] || { printf 'unknown|unknown'; return; }
-  marker=$(printf '%s\n' "$log" \
+  [ -n "$run_id" ] || { printf 'unknown'; return; }
+  log_tail=$(nm_run axi logs --step ci --run "$run_id") || true
+  [ -n "$log_tail" ] || { printf 'unknown'; return; }
+  marker=$(printf '%s\n' "$log_tail" \
     | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout' \
     | tail -1)
-  relapse=$(printf '%s\n' "$log" | awk '
-    /CI checks passed|no CI checks reported - still monitoring/ { green = 1; next }
-    green && /no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout/ { print }
-  ')
-  if [ -n "$relapse" ]; then
-    generation="relapse-$(printf '%s' "$relapse" | cksum | awk '{ print $1 ":" $2 }')"
-  else
-    generation=baseline
-  fi
   case "$marker" in
-    *"checks passed"*|*"no CI checks reported - still monitoring"*) result=green ;;
-    *"no CI checks reported yet"*|*"checks failed"*|*"issues detected"*|*"CI checks running"*|*"base branch advanced"*"re-arming CI monitor timeout"*) result=not-ready ;;
-    *) result=unknown ;;
+    *"checks passed"*|*"no CI checks reported - still monitoring"*) printf 'green' ;;
+    *"no CI checks reported yet"*|*"checks failed"*|*"issues detected"*|*"CI checks running"*|*"base branch advanced"*"re-arming CI monitor timeout"*) printf 'not-ready' ;;
+    *) printf 'unknown' ;;
   esac
-  printf '%s|%s' "$result" "$generation"
 }
 # Coarse fallback for cross-branch attribution. `no-mistakes axi status` (bare)
 # reports the active-or-most-recent run for the CURRENT branch when one
@@ -443,7 +432,6 @@ if [ "$HAVE_RUN" = 1 ]; then
   RUN_DETAIL=""
   CI_STEP_STATUS=""
   CI_LOG_STATE=""
-  CI_GENERATION=""
   RUN_ID=""
   RUN_STATUS=""
   if [ "$RUN_SOURCE" = coarse ]; then
@@ -508,9 +496,7 @@ if [ "$HAVE_RUN" = 1 ]; then
         CI_STEP_STATUS=$(nm_effective_ci_step_status)
         case "$CI_STEP_STATUS" in
           running)
-            CI_SNAPSHOT=$(nm_ci_checks_snapshot)
-            CI_LOG_STATE=${CI_SNAPSHOT%%|*}
-            CI_GENERATION=${CI_SNAPSHOT#*|}
+            CI_LOG_STATE=$(nm_ci_checks_state)
             if [ "$CI_LOG_STATE" = green ]; then
               RUN_STATE="done"
               RUN_DETAIL="checks green: PR ready for review (still monitoring for merge/close)"
@@ -532,9 +518,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     if [ "$RUN_STATUS" = fixing ]; then
       CI_LOG_STATE=not-ready
     elif [ "$CI_STEP_STATUS" = running ] && [ -z "$CI_LOG_STATE" ]; then
-      CI_SNAPSHOT=$(nm_ci_checks_snapshot)
-      CI_LOG_STATE=${CI_SNAPSHOT%%|*}
-      CI_GENERATION=${CI_SNAPSHOT#*|}
+      CI_LOG_STATE=$(nm_ci_checks_state)
     elif [ "$CI_STEP_STATUS" = fixing ]; then
       CI_LOG_STATE=not-ready
     fi
@@ -542,9 +526,6 @@ if [ "$HAVE_RUN" = 1 ]; then
       ready_detail="$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
       if [ -n "$RUN_ID" ]; then
         ready_detail="$ready_detail${SEP}run-identity: $RUN_ID"
-        if [ -n "$CI_GENERATION" ] && [ "$CI_GENERATION" != unknown ]; then
-          ready_detail="$ready_detail|$CI_GENERATION"
-        fi
       fi
       emit "done" status-log "$ready_detail"
     fi
@@ -553,14 +534,7 @@ if [ "$HAVE_RUN" = 1 ]; then
   if [ "$RUN_STATE" = "done" ] && [ -n "$RUN_ID" ]; then
     case "$RUN_DETAIL" in
       *"checks green: PR ready for review"*)
-        if [ -z "$CI_GENERATION" ]; then
-          CI_SNAPSHOT=$(nm_ci_checks_snapshot)
-          CI_GENERATION=${CI_SNAPSHOT#*|}
-        fi
         RUN_DETAIL="$RUN_DETAIL${SEP}run-identity: $RUN_ID"
-        if [ -n "$CI_GENERATION" ] && [ "$CI_GENERATION" != unknown ]; then
-          RUN_DETAIL="$RUN_DETAIL|$CI_GENERATION"
-        fi
         ;;
     esac
   fi
