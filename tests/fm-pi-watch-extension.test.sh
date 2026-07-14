@@ -444,6 +444,52 @@ EOF
   pass "Pi keeps restart exit 143 actionable when no fresh home-scoped replacement exists"
 }
 
+test_pi_reload_restart_sigterm_requires_valid_previous_pid() {
+  local repo home plugin out status
+  repo="$TMP_ROOT/pi-reload-invalid-previous-pid-root"
+  home="$TMP_ROOT/pi-reload-invalid-previous-pid-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-wake-lib.sh" <<'SH'
+fm_watcher_healthy() {
+  FM_WATCHER_HEALTHY_PID=222
+}
+SH
+  : > "$repo/bin/fm-watch.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" node --input-type=module 2>&1 <<'EOF'
+import { existsSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const handoff = `${process.env.FM_HOME}/state/.pi-watch-restart-handoff`;
+const prompts = [];
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+
+for (const previousPid of ["", "invalid", "0", "1"]) {
+  writeFileSync(handoff, `${JSON.stringify({ previousPid, complete: true, stdout: "", stderr: "", code: 143, reason: "" })}\n`);
+  mod.default({
+    on() {},
+    registerCommand() {},
+    registerTool() {},
+    sendUserMessage: async (message) => prompts.push(message),
+  });
+  for (let i = 0; i < 50 && existsSync(handoff); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  if (existsSync(handoff)) throw new Error(`invalid previous PID handoff was not delivered: ${JSON.stringify(previousPid)}`);
+}
+if (prompts.length !== 4 || prompts.some((message) => !message.includes("fm-watch-arm.sh exited 143"))) {
+  throw new Error(`invalid previous PIDs suppressed restart failures: ${prompts.join("\n")}`);
+}
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi reload restart SIGTERM suppression must require a valid previous watcher PID"
+  [ -z "$out" ] || fail "Pi invalid-previous-PID test printed output: $out"
+  pass "Pi keeps restart exit 143 actionable without a valid previous watcher PID"
+}
+
 test_pi_restart_handoff_requires_session_lock_ownership() {
   local repo home plugin out status
   repo="$TMP_ROOT/pi-restart-handoff-lock-root"
@@ -1020,6 +1066,7 @@ test_pi_tool_returns_agent_tool_result
 test_pi_tool_survives_late_reload_active_tool_reset
 test_pi_reload_restart_sigterm_is_benign_only_after_verified_replacement
 test_pi_reload_restart_sigterm_without_replacement_stays_failed
+test_pi_reload_restart_sigterm_requires_valid_previous_pid
 test_pi_restart_handoff_requires_session_lock_ownership
 test_pi_process_exit_cleanup_listener_lifecycle
 test_pi_process_exit_cleanup_stops_arm_child

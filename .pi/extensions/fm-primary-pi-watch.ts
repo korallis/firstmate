@@ -113,6 +113,7 @@ function healthyHomeWatcherPid(): string {
 }
 
 async function replacementWatcherIsHealthy(previousPid: string): Promise<boolean> {
+  if (!/^[1-9][0-9]*$/.test(previousPid) || previousPid === "1") return false;
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const healthyPid = healthyHomeWatcherPid();
