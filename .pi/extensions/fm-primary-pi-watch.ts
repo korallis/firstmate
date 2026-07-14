@@ -1,6 +1,6 @@
 // Firstmate primary watcher bridge for Pi.
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ type ArmResult = {
 type LockOwnership = "owned" | "missing" | "other";
 
 type RestartHandoff = {
+  generation: string;
   previousPid: string;
   complete: boolean;
   stdout: string;
@@ -136,7 +137,19 @@ function writeRestartHandoff(handoff: RestartHandoff): void {
   writeFileSync(restartHandoffFile, `${JSON.stringify(handoff)}\n`);
 }
 
-function clearRestartHandoff(): void {
+function completeRestartHandoff(generation: string, update: Omit<RestartHandoff, "generation" | "previousPid" | "complete">): void {
+  const current = readRestartHandoff();
+  if (!current || current.generation !== generation || current.complete) return;
+  writeRestartHandoff({ ...current, ...update, complete: true });
+}
+
+function sameRestartHandoff(left: RestartHandoff, right: RestartHandoff): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function clearRestartHandoff(expected: RestartHandoff): void {
+  const current = readRestartHandoff();
+  if (!current || !sameRestartHandoff(current, expected)) return;
   try {
     unlinkSync(restartHandoffFile);
   } catch {}
@@ -158,6 +171,8 @@ export default function (pi: ExtensionAPI) {
   let apiActive = true;
   let stoppingForReload = false;
   let replacedWatcherPid = "";
+  let toolSurfaceGuardRegistered = false;
+  const generation = randomUUID();
 
   function keepWatcherToolActive(): void {
     if (!apiActive) return;
@@ -190,22 +205,30 @@ export default function (pi: ExtensionAPI) {
     const deadline = Date.now() + 5000;
     let handoff = readRestartHandoff();
     if (!handoff) return;
+    const priorGeneration = handoff.generation;
     while (!handoff.complete && apiActive && sessionOwnsLock() && Date.now() < deadline) {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
-      handoff = readRestartHandoff() || handoff;
+      const current = readRestartHandoff();
+      if (!current || current.generation !== priorGeneration) return;
+      handoff = current;
     }
-    if (!handoff.complete || !apiActive || !sessionOwnsLock()) return;
+    if (!apiActive || !sessionOwnsLock()) return;
+    if (!handoff.complete) {
+      const failure = "watcher: FAILED - Pi reload arm handoff remained incomplete after 5s";
+      if (await sendWake(failure) && sessionOwnsLock()) clearRestartHandoff(handoff);
+      return;
+    }
     if (handoff.reason) {
-      if (await sendWake(handoff.reason) && sessionOwnsLock()) clearRestartHandoff();
+      if (await sendWake(handoff.reason) && sessionOwnsLock()) clearRestartHandoff(handoff);
       return;
     }
     if (handoff.code === 143 && await replacementWatcherIsHealthy(handoff.previousPid)) {
-      if (sessionOwnsLock()) clearRestartHandoff();
+      if (apiActive && sessionOwnsLock()) clearRestartHandoff(handoff);
       return;
     }
-    if (!sessionOwnsLock()) return;
+    if (!apiActive || !sessionOwnsLock()) return;
     const failure = failureLine(handoff.stdout, handoff.stderr, handoff.code);
-    if (failure && await sendWake(failure) && sessionOwnsLock()) clearRestartHandoff();
+    if (failure && await sendWake(failure) && sessionOwnsLock()) clearRestartHandoff(handoff);
   }
 
   function startArm(): ArmResult {
@@ -237,7 +260,7 @@ export default function (pi: ExtensionAPI) {
       child = null;
       const reason = actionableLine(`${stdout}\n${stderr}`);
       if (stoppingForReload) {
-        writeRestartHandoff({ previousPid: replacedWatcherPid, complete: true, stdout, stderr, code, reason });
+        completeRestartHandoff(generation, { stdout, stderr, code, reason });
         return;
       }
       const failure = reason ? "" : failureLine(stdout, stderr, code);
@@ -252,7 +275,7 @@ export default function (pi: ExtensionAPI) {
       child = null;
       const failure = `watcher: FAILED - Pi extension arm child ${id} failed: ${error.message}`;
       if (stoppingForReload) {
-        writeRestartHandoff({ previousPid: replacedWatcherPid, complete: true, stdout, stderr: failure, code: null, reason: "" });
+        completeRestartHandoff(generation, { stdout, stderr: failure, code: null, reason: "" });
         return;
       }
       try {
@@ -268,16 +291,18 @@ export default function (pi: ExtensionAPI) {
     markLoaded();
   });
   pi.on?.("resources_discover", () => {
-    // This event follows every startup/reload session_start, after mode extensions
-    // have selected their safety-scoped tool surface.
     keepWatcherToolActive();
+    if (!toolSurfaceGuardRegistered) {
+      toolSurfaceGuardRegistered = true;
+      pi.on?.("before_agent_start", keepWatcherToolActive);
+    }
   });
   pi.on?.("session_shutdown", (event: { reason?: string }) => {
     apiActive = false;
     stoppingForReload = event?.reason === "reload";
     if (stoppingForReload && child) {
       replacedWatcherPid = recordedWatcherPid();
-      writeRestartHandoff({ previousPid: replacedWatcherPid, complete: false, stdout: "", stderr: "", code: null, reason: "" });
+      writeRestartHandoff({ generation, previousPid: replacedWatcherPid, complete: false, stdout: "", stderr: "", code: null, reason: "" });
     }
     stopArm();
     process.off("exit", cleanupOnProcessExit);

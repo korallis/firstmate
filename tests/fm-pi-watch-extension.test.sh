@@ -256,6 +256,13 @@ for (const handler of handlers.get("resources_discover") ?? []) {
 if (JSON.stringify(activeTools) !== JSON.stringify(["read", "fm_watch_arm_pi"])) {
   throw new Error(`watcher restoration changed the selected mode surface: ${JSON.stringify(activeTools)}`);
 }
+pi.setActiveTools(["read", "edit"]);
+for (const handler of handlers.get("before_agent_start") ?? []) {
+  await handler({}, {});
+}
+if (JSON.stringify(activeTools) !== JSON.stringify(["read", "edit", "fm_watch_arm_pi"])) {
+  throw new Error(`runtime mode transition dropped or widened the watcher surface: ${JSON.stringify(activeTools)}`);
+}
 // Pi invalidates the captured extension API at shutdown. A post-handler timer
 // using getAllTools/setActiveTools would throw here, so prove no such callback remains.
 apiActive = false;
@@ -541,6 +548,109 @@ EOF
   expect_code 0 "$status" "Pi restart handoff processing and deletion must require session lock ownership"
   [ -z "$out" ] || fail "Pi restart-handoff lock test printed output: $out"
   pass "Pi restart handoff remains reserved for the session-lock owner"
+}
+
+test_pi_restart_handoff_generation_is_compare_and_swap_owned() {
+  local repo home plugin out status
+  repo="$TMP_ROOT/pi-restart-handoff-generation-root"
+  home="$TMP_ROOT/pi-restart-handoff-generation-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+trap 'sleep 0.3; exit 143' TERM INT
+: > "${FM_ARM_STARTED:?}"
+while :; do sleep 1; done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_STARTED="$repo/arm-started" node --input-type=module 2>&1 <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const handoffFile = `${process.env.FM_HOME}/state/.pi-watch-restart-handoff`;
+const prompts = [];
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+function loadExtension() {
+  const handlers = new Map();
+  let tool = null;
+  const pi = {
+    on(event, handler) { handlers.set(event, handler); },
+    registerCommand() {},
+    registerTool(candidate) {
+      if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+    },
+    sendUserMessage: async (message) => prompts.push(message),
+  };
+  mod.default(pi);
+  return { handlers, getTool: () => tool };
+}
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const oldGeneration = loadExtension();
+await oldGeneration.getTool().execute("before-generation-race", {}, undefined, undefined, {});
+for (let i = 0; i < 50 && !existsSync(process.env.FM_ARM_STARTED); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+if (!existsSync(process.env.FM_ARM_STARTED)) throw new Error("old generation arm did not start");
+await oldGeneration.handlers.get("session_shutdown")?.({ reason: "reload" }, {});
+const newer = { generation: "newer-generation", previousPid: "222", complete: true, stdout: "", stderr: "", code: 2, reason: "" };
+writeFileSync(handoffFile, `${JSON.stringify(newer)}\n`);
+await new Promise((resolve) => setTimeout(resolve, 700));
+const retained = JSON.parse(readFileSync(handoffFile, "utf8"));
+if (JSON.stringify(retained) !== JSON.stringify(newer)) {
+  throw new Error(`old generation overwrote newer handoff: ${JSON.stringify(retained)}`);
+}
+loadExtension();
+for (let i = 0; i < 50 && existsSync(handoffFile); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+if (existsSync(handoffFile)) throw new Error("current generation did not clear its delivered handoff");
+if (prompts.length !== 1 || !prompts[0].includes("fm-watch-arm.sh exited 2")) {
+  throw new Error(`unexpected generation-owned handoff delivery: ${prompts.join("\n")}`);
+}
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi restart handoffs must use generation-owned compare-and-swap updates and clears"
+  [ -z "$out" ] || fail "Pi restart-handoff generation test printed output: $out"
+  pass "Pi restart handoffs are generation-owned compare-and-swap state"
+}
+
+test_pi_incomplete_restart_handoff_is_actionable() {
+  local repo home plugin out status
+  repo="$TMP_ROOT/pi-incomplete-restart-handoff-root"
+  home="$TMP_ROOT/pi-incomplete-restart-handoff-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" node --input-type=module 2>&1 <<'EOF'
+import { existsSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const handoff = `${process.env.FM_HOME}/state/.pi-watch-restart-handoff`;
+let prompt = "";
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+writeFileSync(handoff, `${JSON.stringify({ generation: "incomplete-generation", previousPid: "111", complete: false, stdout: "", stderr: "", code: null, reason: "" })}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default({
+  on() {},
+  registerCommand() {},
+  registerTool() {},
+  sendUserMessage: async (message) => { prompt = message; },
+});
+for (let i = 0; i < 70 && !prompt; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+if (!prompt.includes("watcher: FAILED - Pi reload arm handoff remained incomplete after 5s")) {
+  throw new Error(`incomplete handoff was not actionable: ${prompt}`);
+}
+if (existsSync(handoff)) throw new Error("delivered incomplete handoff was not compare-and-swap cleared");
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi incomplete restart handoffs must become actionable at the deadline"
+  [ -z "$out" ] || fail "Pi incomplete restart-handoff test printed output: $out"
+  pass "Pi reports incomplete restart handoffs through the current generation"
 }
 
 test_pi_process_exit_cleanup_listener_lifecycle() {
@@ -1068,6 +1178,8 @@ test_pi_reload_restart_sigterm_is_benign_only_after_verified_replacement
 test_pi_reload_restart_sigterm_without_replacement_stays_failed
 test_pi_reload_restart_sigterm_requires_valid_previous_pid
 test_pi_restart_handoff_requires_session_lock_ownership
+test_pi_restart_handoff_generation_is_compare_and_swap_owned
+test_pi_incomplete_restart_handoff_is_actionable
 test_pi_process_exit_cleanup_listener_lifecycle
 test_pi_process_exit_cleanup_stops_arm_child
 test_opencode_primary_watch_plugin_static_wiring
