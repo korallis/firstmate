@@ -141,6 +141,19 @@ _fm_status_key() {  # <status-line> -> key slug, or "default" when no token
     *) printf 'default' ;;
   esac
 }
+_fm_status_drop() {  # <open-set> <key>
+  local set=$1 key=$2 line out=''
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      "$key"$'\t'*) : ;;
+      *) out="${out}${line}"$'\n' ;;
+    esac
+  done <<EOF
+$set
+EOF
+  printf '%s' "$out"
+}
 # Fold the WHOLE status stream for a space-separated set of opening verbs.
 # Prints one TAB-separated "<key>\t<verb>\t<note>" line per still-open event in most-recently-opened-last order.
 # With mode=current, prints only the newest still-open event after the latest real state transition.
@@ -264,16 +277,16 @@ _fm_status_open_activities_stream() {
     stripped=${line//[[:space:]]/}
     [ -n "$stripped" ] || continue
     verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line") || continue
+    key=$(_fm_status_key "$line") || continue
     case "$verb" in
       working|"$pause")
         note=$(status_line_note "$line")
-        open=$(_fm_decision_drop "$open" "$key")
+        open=$(_fm_status_drop "$open" "$key")
         [ -n "$open" ] && open="${open}"$'\n'
         open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
         ;;
       done|failed|needs-decision|blocked|"$resolve")
-        open=$(_fm_decision_drop "$open" "$key")
+        open=$(_fm_status_drop "$open" "$key")
         [ -n "$open" ] && open="${open}"$'\n'
         ;;
     esac
