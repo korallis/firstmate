@@ -83,17 +83,70 @@ fm_pr_ready_identity() {  # <meta> <crew-state-line>
   fi
 }
 
+fm_pr_ready_components_subset() {  # <candidate-subset> <candidate-superset>
+  local remaining=$1 superset=$2 candidates item candidate found
+  [ -z "$remaining" ] && return 0
+  while [ -n "$remaining" ]; do
+    item=${remaining%%|*}
+    if [ "$remaining" = "$item" ]; then remaining=; else remaining=${remaining#*|}; fi
+    candidates=$superset
+    found=1
+    while [ -n "$candidates" ]; do
+      candidate=${candidates%%|*}
+      if [ "$candidates" = "$candidate" ]; then candidates=; else candidates=${candidates#*|}; fi
+      if [ "$item" = "$candidate" ]; then
+        found=0
+        break
+      fi
+    done
+    [ "$found" -eq 0 ] || return 1
+  done
+}
+
+fm_pr_ready_adds_relapse() {  # <prior-components> <current-components>
+  local prior=$1 remaining=$2 item
+  while [ -n "$remaining" ]; do
+    item=${remaining%%|*}
+    if [ "$remaining" = "$item" ]; then remaining=; else remaining=${remaining#*|}; fi
+    case "$item" in
+      relapse-*)
+        fm_pr_ready_components_subset "$item" "$prior" || return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
 fm_pr_ready_identity_relation() {  # <prior> <current>
-  local prior=$1 current=$2 added
+  local prior=$1 current=$2 prior_rest current_rest prior_branch current_branch
+  local prior_head current_head prior_components current_components
   if [ "$prior" = "$current" ]; then
     printf 'same'
-  elif [ -n "$prior" ] && [ "${current#"$prior|"}" != "$current" ]; then
-    added=${current#"$prior|"}
-    case "$added" in
-      baseline|*'|baseline') printf 'upgrade' ;;
-      *) printf 'different' ;;
-    esac
-  elif [ -n "$current" ] && [ "${prior#"$current|"}" != "$prior" ]; then
+    return
+  fi
+  case "$prior:$current" in
+    *'|'*:*'|'*) ;;
+    *) printf 'different'; return ;;
+  esac
+  prior_branch=${prior%%|*}
+  current_branch=${current%%|*}
+  prior_rest=${prior#*|}
+  current_rest=${current#*|}
+  prior_head=${prior_rest%%|*}
+  current_head=${current_rest%%|*}
+  [ "$prior_branch" = "$current_branch" ] && [ "$prior_head" = "$current_head" ] \
+    || { printf 'different'; return; }
+  case "$prior_rest" in *'|'*) prior_components=${prior_rest#*|} ;; *) prior_components= ;; esac
+  case "$current_rest" in *'|'*) current_components=${current_rest#*|} ;; *) current_components= ;; esac
+  if fm_pr_ready_components_subset "$prior_components" "$current_components"; then
+    if fm_pr_ready_components_subset "$current_components" "$prior_components"; then
+      printf 'same'
+    elif fm_pr_ready_adds_relapse "$prior_components" "$current_components"; then
+      printf 'different'
+    else
+      printf 'upgrade'
+    fi
+  elif fm_pr_ready_components_subset "$current_components" "$prior_components"; then
     printf 'same'
   else
     printf 'different'

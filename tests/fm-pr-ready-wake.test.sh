@@ -200,6 +200,31 @@ test_coarse_status_refines_to_authoritative_baseline() {
   pass "coarse status readiness refines to authoritative baseline without a duplicate"
 }
 
+test_identity_refinement_relation_matrix() {
+  local row prior current expected actual
+  while IFS=$'\t' read -r prior current expected; do
+    [ -n "$prior" ] || continue
+    actual=$(fm_pr_ready_identity_relation "$prior" "$current")
+    [ "$actual" = "$expected" ] \
+      || fail "identity relation $prior -> $current was $actual, expected $expected"
+  done <<'MATRIX'
+fm/task|head-1	fm/task|head-1	same
+fm/task|head-1	fm/task|head-1|run-7	upgrade
+fm/task|head-1	fm/task|head-1|run-7|baseline	upgrade
+fm/task|head-1	fm/task|head-1|baseline|run-7	upgrade
+fm/task|head-1|run-7	fm/task|head-1|baseline|run-7	upgrade
+fm/task|head-1|baseline	fm/task|head-1|run-7|baseline	upgrade
+fm/task|head-1|run-7|baseline	fm/task|head-1|baseline|run-7	same
+fm/task|head-1|run-7|baseline	fm/task|head-1|run-7	same
+fm/task|head-1|run-7	fm/task|head-1|run-7|relapse-42:1	different
+fm/task|head-1|run-7|baseline	fm/task|head-1|run-7|relapse-42:1	different
+fm/task|head-1|run-7|baseline	fm/task|head-1|run-8|baseline	different
+fm/task|head-1|run-7|baseline	fm/other|head-1|run-7|baseline	different
+fm/task|head-1|run-7|baseline	fm/task|head-2|run-7|baseline	different
+MATRIX
+  pass "identity refinement is order-independent while relapse and branch/head changes stay distinct"
+}
+
 test_unknown_generation_upgrades_without_duplicate() {
   local dir state fakebin first known recovered marker
   dir=$(make_case unknown-generation); state="$dir/state"; fakebin="$dir/fakebin"
@@ -429,6 +454,7 @@ test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
 test_coarse_status_refines_to_authoritative_baseline
+test_identity_refinement_relation_matrix
 test_unknown_generation_upgrades_without_duplicate
 test_unknown_generation_refinement_preserves_relapse
 test_transient_git_identity_failure_preserves_marker
