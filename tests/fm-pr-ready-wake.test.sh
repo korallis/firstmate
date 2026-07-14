@@ -10,9 +10,9 @@ set -u
 
 WATCH="$ROOT/bin/fm-watch.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-ready-wake-tests)
-READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|4294967295:0'
-ALT_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7|4294967295:0 · status-log event superseded by authoritative run'
-RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|1289303112:42'
+READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|baseline'
+ALT_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7|baseline · status-log event superseded by authoritative run'
+RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|relapse-1289303112:42'
 STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR · run-identity: run-7'
 UNKNOWN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7'
 WORKING_LINE='state: working · source: run-step · ci running'
@@ -195,10 +195,57 @@ test_unknown_generation_upgrades_without_duplicate() {
   known=$(next_ready "$state" "$fakebin" unknown-generation "$READY_LINE")
   [ -z "$known" ] || fail "newly readable CI generation duplicated readiness"
   marker=$(cat "$state/.pr-ready-unknown-generation")
-  case "$marker" in *'run-7|4294967295:0') ;; *) fail "newly readable CI generation did not upgrade the marker" ;; esac
+  case "$marker" in *'run-7|baseline') ;; *) fail "newly readable CI generation did not upgrade the marker" ;; esac
   recovered=$(next_ready "$state" "$fakebin" unknown-generation "$RECOVERED_READY_LINE")
   [ -n "$recovered" ] || fail "later CI relapse was suppressed after marker upgrade"
   pass "unknown CI generation anchors once and upgrades without duplicate wake"
+}
+
+test_unknown_generation_refinement_preserves_relapse() {
+  local dir state fakebin first recovered
+  dir=$(make_case unknown-generation-relapse); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" unknown-relapse off
+  first=$(next_ready "$state" "$fakebin" unknown-relapse "$UNKNOWN_READY_LINE")
+  [ -n "$first" ] || fail "unreadable initial readiness did not wake"
+  commit_record "$state" "$first"
+  recovered=$(next_ready "$state" "$fakebin" unknown-relapse "$RECOVERED_READY_LINE")
+  [ -n "$recovered" ] || fail "identity refinement hid an intervening relapse"
+  pass "identity refinement preserves relapse after initially unreadable CI logs"
+}
+
+test_transient_git_identity_failure_preserves_marker() {
+  local dir state fakebin first marker before after
+  dir=$(make_case git-identity-failure); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" git-failure off
+  first=$(next_ready "$state" "$fakebin" git-failure "$READY_LINE")
+  commit_record "$state" "$first"
+  marker="$state/.pr-ready-git-failure"
+  before=$(cat "$marker")
+  git -C "$dir/git-failure-wt" checkout -q --detach
+  [ -z "$(next_ready "$state" "$fakebin" git-failure "$READY_LINE")" ] \
+    || fail "unreadable branch identity emitted a duplicate readiness wake"
+  after=$(cat "$marker")
+  [ "$after" = "$before" ] || fail "unreadable branch identity changed the readiness marker"
+  pass "transient git identity failure preserves prior readiness"
+}
+
+test_signal_cannot_starve_pr_ready_sweep() {
+  local dir state fakebin out pid
+  dir=$(make_case signal-starvation); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" signal-ready off
+  printf 'blocked: unrelated decision required\n' > "$state/unrelated.status"
+  printf 'Working...\n' > "$dir/pane"
+  out="$dir/watch.out"
+  FM_FAKE_CREW_STATE="$READY_LINE" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "unrelated signal starved PR-ready scan"; }
+  grep -F "check: authoritative PR-ready transition for signal-ready" "$out" >/dev/null \
+    || fail "unrelated actionable signal outran the due PR-ready scan"
+  pass "actionable signals cannot starve bounded PR-ready scans"
 }
 
 test_transient_relapse_changes_stable_generation() {
@@ -367,6 +414,9 @@ test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
 test_unknown_generation_upgrades_without_duplicate
+test_unknown_generation_refinement_preserves_relapse
+test_transient_git_identity_failure_preserves_marker
+test_signal_cannot_starve_pr_ready_sweep
 test_transient_relapse_changes_stable_generation
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan

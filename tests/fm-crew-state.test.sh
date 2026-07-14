@@ -509,7 +509,8 @@ EOF
   second=$(run_crew_state "$d" feat-checkspassed)
   second_identity=${second#*run-identity: }
   second_identity=${second_identity%% *}
-  case "$second_identity" in '01RUN|'*) ;; *) fail "readable CI generation did not refine the run identity" ;; esac
+  [ "$second_identity" = '01RUN|baseline' ] \
+    || fail "first readable green history did not refine to baseline: $second_identity"
   pass "checks-passed identity refines without an unknown generation sentinel"
 }
 
@@ -540,7 +541,10 @@ EOF
   second=$(run_crew_state "$d" feat-citransient)
   second_identity=${second#*run-identity: }
   second_identity=${second_identity%% *}
-  [ "$first_identity" != "$second_identity" ] || fail "transient relapse did not advance the CI-monitor generation"
+  case "$first_identity:$second_identity" in
+    '01RUN|baseline:01RUN|relapse-'*) ;;
+    *) fail "transient relapse did not advance from baseline: $first_identity -> $second_identity" ;;
+  esac
   FM_FAKE_CI_LOGS="$FM_FAKE_CI_LOGS
 all CI checks passed - still monitoring until merged or closed"
   repeated=$(run_crew_state "$d" feat-citransient)

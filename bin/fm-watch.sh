@@ -290,6 +290,31 @@ pr_ready_recheck() {  # <window>
   touch "$scan_file"
 }
 
+pending_status_reports_ready() {  # <pending-signal-records> <task-id>
+  local pending=$1 wanted=$2 sf sig f line task
+  while IFS=$(printf '\t') read -r sf sig f; do
+    [ -n "$sf" ] || continue
+    case "$f" in "$STATE"/*.status) ;; *) continue ;; esac
+    task=$(basename "$f" .status)
+    [ "$task" = "$wanted" ] || continue
+    line=$(last_status_line "$f")
+    fm_pr_ready_status_reports_ready "$line" && return 0
+  done <<EOF
+$pending
+EOF
+  return 1
+}
+
+pr_ready_sweep() {  # [pending-signal-records]
+  local pending=${1:-} w task
+  while IFS= read -r w; do
+    task=$(window_to_task "$w" "$STATE")
+    [ -n "$task" ] || continue
+    pending_status_reports_ready "$pending" "$task" && continue
+    pr_ready_recheck "$w"
+  done < <(recorded_windows)
+}
+
 # A current done/checks-green status signal already makes readiness actionable.
 # After that signal is durably queued, persist its authoritative run identity so
 # the next watcher generation does not emit a second readiness wake.
@@ -703,6 +728,15 @@ while :; do
   if [ -n "$pending" ]; then
     sleep "$SIGNAL_GRACE"
     pending=$(printf '%s\n%s' "$pending" "$(scan_signals)")
+  fi
+
+  # Run the bounded authoritative sweep before any signal-triggered exit so a
+  # chatty sibling cannot starve a background checks-green transition.
+  # A changed done/checks-green status keeps the normal signal path for its own
+  # task; every unrelated task remains eligible for this sweep.
+  pr_ready_sweep "$pending"
+
+  if [ -n "$pending" ]; then
     files=""
     while IFS=$(printf '\t') read -r sf sig f; do
       [ -n "$sf" ] || continue
@@ -759,7 +793,6 @@ EOF
   while IFS= read -r w; do
     kind=$(window_kind "$w")
     task=$(window_to_task "$w" "$STATE")
-    pr_ready_recheck "$w"
     key=${w//:/_}
     key=${key//\//_}
     key=${key//./_}

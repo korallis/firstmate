@@ -67,24 +67,30 @@ fm_pr_ready_verdict() {  # <crew-state-line>
 fm_pr_ready_identity() {  # <meta> <crew-state-line>
   local meta=$1 line=$2 wt branch head authority
   wt=$(fm_pr_ready_meta_value "$meta" worktree)
-  branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-  head=$(git -C "$wt" rev-parse HEAD 2>/dev/null || true)
+  [ -n "$wt" ] && [ -d "$wt" ] || return 1
+  branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
+  head=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null) || return 1
+  [ -n "$branch" ] && [ -n "$head" ] || return 1
   case "$line" in
     *'run-identity: '*)
       authority=${line#*run-identity: }
       authority=${authority%% *}
       ;;
   esac
-  printf '%s|%s' "${branch:-unknown-branch}" "${head:-unknown-head}"
+  printf '%s|%s' "$branch" "$head"
   [ -n "${authority:-}" ] && printf '|%s' "$authority"
 }
 
 fm_pr_ready_identity_relation() {  # <prior> <current>
-  local prior=$1 current=$2
+  local prior=$1 current=$2 added
   if [ "$prior" = "$current" ]; then
     printf 'same'
   elif [ -n "$prior" ] && [ "${current#"$prior|"}" != "$current" ]; then
-    printf 'upgrade'
+    added=${current#"$prior|"}
+    case "$added" in
+      baseline) printf 'upgrade' ;;
+      *) printf 'different' ;;
+    esac
   elif [ -n "$current" ] && [ "${prior#"$current|"}" != "$prior" ]; then
     printf 'same'
   else
@@ -134,7 +140,7 @@ fm_pr_ready_transition() {  # <state> <task-id>
       return 1
       ;;
     ready)
-      identity=$(fm_pr_ready_identity "$meta" "$line")
+      identity=$(fm_pr_ready_identity "$meta" "$line") || return 1
       prior=$(cat "$marker" 2>/dev/null || true)
       relation=$(fm_pr_ready_identity_relation "$prior" "$identity")
       case "$relation" in

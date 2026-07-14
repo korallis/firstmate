@@ -323,12 +323,12 @@ nm_effective_ci_step_status() {
 # monitoring until merged or closed" (verified against 360+ real run logs under
 # ~/.no-mistakes/logs/*/ci.log on the installed v1.32.2 binary, including the
 # actual PR #252 run). Reads the full ci step log via `axi logs --full`, scans
-# the most recent recognized marker for current state, and hashes only the
-# recognized non-ready history into a stable monitor generation. Green-only
-# repetition leaves that generation unchanged, while a failed check or re-arm
-# changes it even if green returns before the next observer scan.
+# the most recent recognized marker for current state, and hashes only non-ready
+# markers observed after the first green marker into a stable monitor generation.
+# Initial pre-green work refines to `baseline`; a failed check or re-arm after
+# green changes to a relapse generation even if green returns before the next scan.
 nm_ci_checks_snapshot() {
-  local run_id log marker non_ready generation result
+  local run_id log marker relapse generation result
   run_id=$(strip_quotes "$(nm_field id)")
   [ -n "$run_id" ] || { printf 'unknown|unknown'; return; }
   log=$(nm_run axi logs --full --step ci --run "$run_id") || true
@@ -336,9 +336,15 @@ nm_ci_checks_snapshot() {
   marker=$(printf '%s\n' "$log" \
     | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout' \
     | tail -1)
-  non_ready=$(printf '%s\n' "$log" \
-    | grep -E 'no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout' || true)
-  generation=$(printf '%s' "$non_ready" | cksum | awk '{ print $1 ":" $2 }')
+  relapse=$(printf '%s\n' "$log" | awk '
+    /CI checks passed|no CI checks reported - still monitoring/ { green = 1; next }
+    green && /no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout/ { print }
+  ')
+  if [ -n "$relapse" ]; then
+    generation="relapse-$(printf '%s' "$relapse" | cksum | awk '{ print $1 ":" $2 }')"
+  else
+    generation=baseline
+  fi
   case "$marker" in
     *"checks passed"*|*"no CI checks reported - still monitoring"*) result=green ;;
     *"no CI checks reported yet"*|*"checks failed"*|*"issues detected"*|*"CI checks running"*|*"base branch advanced"*"re-arming CI monitor timeout"*) result=not-ready ;;
