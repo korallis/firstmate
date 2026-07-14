@@ -7,11 +7,12 @@
 # ready, and returns one actionable transition record at a time.
 #
 # A per-task state/.pr-ready-<id> marker suppresses the same readiness identity
-# across watcher generations. The identity is the stable branch and branch HEAD,
-# never volatile rendered current-state detail. Any observed authoritative re-arm,
-# failed check, pause, gate,
-# or other non-ready state clears the marker so a later green state re-surfaces;
-# an unknown/unreadable state preserves it rather than manufacturing a duplicate
+# across watcher generations.
+# The identity combines branch and HEAD with fm-crew-state's stable run/CI-monitor
+# generation, never volatile rendered current-state detail.
+# Any observed authoritative re-arm, failed check, pause, gate, or other non-ready
+# state clears the marker so a later green state re-surfaces.
+# An unknown/unreadable state preserves it rather than manufacturing a duplicate
 # from a transient read error.
 #
 # The watcher must enqueue before calling fm_pr_ready_commit. This library never
@@ -32,6 +33,16 @@ fm_pr_ready_marker_path() {  # <state> <task-id>
   printf '%s/.pr-ready-%s' "$1" "$key"
 }
 
+fm_pr_ready_scan_path() {  # <state> <task-id>
+  local key
+  key=$(printf '%s' "$2" | tr ':/.' '___')
+  printf '%s/.last-pr-ready-%s' "$1" "$key"
+}
+
+fm_pr_ready_cleanup() {  # <state> <task-id>
+  rm -f "$(fm_pr_ready_marker_path "$1" "$2")" "$(fm_pr_ready_scan_path "$1" "$2")"
+}
+
 # Print ready, supersede, or indeterminate for one canonical crew-state line.
 fm_pr_ready_verdict() {  # <crew-state-line>
   local line=$1 state source
@@ -50,21 +61,28 @@ fm_pr_ready_verdict() {  # <crew-state-line>
   esac
 }
 
-fm_pr_ready_identity() {  # <meta>
-  local meta=$1 wt branch head
+fm_pr_ready_identity() {  # <meta> <crew-state-line>
+  local meta=$1 line=$2 wt branch head authority
   wt=$(fm_pr_ready_meta_value "$meta" worktree)
   branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   head=$(git -C "$wt" rev-parse HEAD 2>/dev/null || true)
+  case "$line" in
+    *'run-identity: '*)
+      authority=${line#*run-identity: }
+      authority=${authority%% *}
+      ;;
+  esac
   printf '%s|%s' "${branch:-unknown-branch}" "${head:-unknown-head}"
+  [ -n "${authority:-}" ] && printf '|%s' "$authority"
 }
 
 fm_pr_ready_status_reports_ready() {  # <status-line>
-  local line=$1 verb note
+  local line=$1 verb
   verb=${line%%:*}
   verb=${verb%%\[key=*}
   verb=${verb#"${verb%%[![:space:]]*}"}
   verb=${verb%"${verb##*[![:space:]]}"}
-  [ "$verb" = done ] || return 1
+  [ "$verb" = "done" ] || return 1
   case "$line" in
     *PR*"checks green"*|*"checks green"*PR*) return 0 ;;
   esac
@@ -100,7 +118,7 @@ fm_pr_ready_transition() {  # <state> <task-id>
       return 1
       ;;
     ready)
-      identity=$(fm_pr_ready_identity "$meta")
+      identity=$(fm_pr_ready_identity "$meta" "$line")
       prior=$(cat "$marker" 2>/dev/null || true)
       [ "$prior" = "$identity" ] && return 1
       yolo=$(fm_pr_ready_meta_value "$meta" yolo)

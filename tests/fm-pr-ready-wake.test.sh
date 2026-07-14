@@ -10,8 +10,9 @@ set -u
 
 WATCH="$ROOT/bin/fm-watch.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-ready-wake-tests)
-READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close)'
-ALT_READY_LINE='state: done · source: run-step · checks green: PR ready for review · status-log event superseded by authoritative run'
+READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|4294967295:0'
+ALT_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7|4294967295:0 · status-log event superseded by authoritative run'
+RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|1289303112:42'
 WORKING_LINE='state: working · source: run-step · ci running'
 FAILED_LINE='state: failed · source: run-step · run failed'
 PAUSED_GREEN_LINE='state: paused · source: status-log · awaiting upstream owner · checks green: PR ready for review (still monitoring for merge/close)'
@@ -182,6 +183,17 @@ test_done_status_seeds_next_generation_dedupe() {
   pass "done/checks-green signal suppresses duplicate readiness in the next watcher generation"
 }
 
+test_transient_relapse_changes_stable_generation() {
+  local dir state fakebin first recovered
+  dir=$(make_case transient-relapse); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" transient-relapse off
+  first=$(next_ready "$state" "$fakebin" transient-relapse "$READY_LINE")
+  commit_record "$state" "$first"
+  recovered=$(next_ready "$state" "$fakebin" transient-relapse "$RECOVERED_READY_LINE")
+  [ -n "$recovered" ] || fail "same-HEAD recovery after an unobserved relapse was suppressed"
+  pass "stable CI-monitor generation preserves transient relapse and recovery"
+}
+
 test_relapse_rearm_and_head_change_supersede_green() {
   local dir state fakebin first again marker
   dir=$(make_case relapse-rearm); state="$dir/state"; fakebin="$dir/fakebin"
@@ -284,6 +296,20 @@ test_approval_posture_changes_reason_not_authority() {
   pass "approval on/off changes only the actionable hint; the shell never approves or merges"
 }
 
+test_pr_ready_state_cleanup() {
+  local dir state
+  dir=$(make_case state-cleanup); state="$dir/state"
+  touch "$state/.pr-ready-cleanup" "$state/.last-pr-ready-cleanup"
+  fm_pr_ready_cleanup "$state" cleanup
+  [ ! -e "$state/.pr-ready-cleanup" ] || fail "readiness marker survived cleanup"
+  [ ! -e "$state/.last-pr-ready-cleanup" ] || fail "readiness cadence marker survived cleanup"
+  grep -F "fm_pr_ready_cleanup \"\$STATE\" \"\$ID\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
+    || fail "normal teardown does not invoke PR-ready cleanup"
+  grep -F "fm_pr_ready_cleanup \"\$sub_state\" \"\$child_id\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
+    || fail "secondmate-child teardown does not invoke PR-ready cleanup"
+  pass "normal and secondmate-child teardown remove persistent PR-ready state"
+}
+
 test_keyed_pause_precedence_and_stale_absorption() {
   local dir state fakebin out pid key record
   dir=$(make_case keyed-pause); state="$dir/state"; fakebin="$dir/fakebin"
@@ -322,9 +348,11 @@ test_background_ci_fixer_wakes_before_stale_status
 test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
+test_transient_relapse_changes_stable_generation
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
 test_changing_pane_failure_is_observed_by_task_scan
 test_approval_posture_changes_reason_not_authority
+test_pr_ready_state_cleanup
 test_keyed_pause_precedence_and_stale_absorption
 printf 'all fm-pr-ready wake tests passed\n'

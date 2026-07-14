@@ -274,11 +274,10 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # even while the pane is busy or changing. The cadence and readiness marker
 # persist across watcher generations.
 pr_ready_recheck() {  # <window>
-  local win=$1 task key scan_file record ready_id ready_identity ready_reason
+  local win=$1 task scan_file record ready_id ready_identity ready_reason
   task=$(window_to_task "$win" "$STATE")
   [ -n "$task" ] || return 0
-  key=$(printf '%s' "$task" | tr ':/.' '___')
-  scan_file="$STATE/.last-pr-ready-$key"
+  scan_file=$(fm_pr_ready_scan_path "$STATE" "$task")
   [ "$(age_of "$scan_file")" -ge "$PR_READY_SCAN_INTERVAL" ] || return 0
   record=$(fm_pr_ready_transition "$STATE" "$task" || true)
   if [ -n "$record" ]; then

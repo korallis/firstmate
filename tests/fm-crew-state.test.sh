@@ -468,8 +468,46 @@ EOF
   assert_contains "$out" "state: done" "green ci-monitor run -> done"
   assert_contains "$out" "source: run-step" "green ci-monitor -> run-step source"
   assert_contains "$out" "checks green" "green ci-monitor detail mentions checks green"
+  assert_contains "$out" "run-identity: 01RUN|" "green ci-monitor exposes stable run generation"
   assert_not_contains "$out" "state: working" "green ci-monitor must not read as still validating"
   pass "ci-monitoring run with checks already green surfaces done"
+}
+
+test_ci_monitor_generation_records_transient_relapse() {
+  reset_fakes
+  local d first second repeated first_identity second_identity repeated_identity
+  d=$(new_case ci-transient-relapse)
+  make_repo_on_branch "$d/wt" fm/feat-citransient
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-citransient.meta" "window=fm:fm-feat-citransient" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-citransient)"
+  FM_FAKE_CI_LOGS=$(cat <<'EOF'
+CI checks running, waiting for results...
+all CI checks passed - still monitoring until merged or closed
+EOF
+)
+  first=$(run_crew_state "$d" feat-citransient)
+  first_identity=${first#*run-identity: }
+  first_identity=${first_identity%% *}
+  FM_FAKE_CI_LOGS=$(cat <<'EOF'
+CI checks running, waiting for results...
+all CI checks passed - still monitoring until merged or closed
+issues detected: merge conflict - auto-fixing (attempt 2/10)...
+CI checks running, waiting for results...
+all CI checks passed - still monitoring until merged or closed
+EOF
+)
+  second=$(run_crew_state "$d" feat-citransient)
+  second_identity=${second#*run-identity: }
+  second_identity=${second_identity%% *}
+  [ "$first_identity" != "$second_identity" ] || fail "transient relapse did not advance the CI-monitor generation"
+  FM_FAKE_CI_LOGS="$FM_FAKE_CI_LOGS
+all CI checks passed - still monitoring until merged or closed"
+  repeated=$(run_crew_state "$d" feat-citransient)
+  repeated_identity=${repeated#*run-identity: }
+  repeated_identity=${repeated_identity%% *}
+  [ "$second_identity" = "$repeated_identity" ] || fail "repeated green wording changed the CI-monitor generation"
+  pass "CI-monitor generation records transient relapse without green-only volatility"
 }
 
 test_top_level_ci_checks_green_surfaces_done() {
@@ -1143,6 +1181,7 @@ test_scalar_gate_parked_not_superseded
 test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
 test_ci_monitoring_checks_green_surfaces_done
+test_ci_monitor_generation_records_transient_relapse
 test_top_level_ci_checks_green_surfaces_done
 test_ci_monitoring_no_checks_terminal_surfaces_done
 test_ci_monitoring_green_then_rearm_stays_working
