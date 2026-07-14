@@ -146,6 +146,34 @@ EVENT_CAP_FAIL_MAX=${FM_EVENT_CAP_FAIL_MAX:-3}
 _event_cap_key=""
 _event_cap_ok=0
 _event_cap_fails=0
+_pause_cache_files=()
+_pause_cache_sigs=()
+_pause_cache_values=()
+
+watch_status_has_current_pause() {  # <status-file>
+  local file=$1 sig i value
+  sig=$(stat_sig "$file")
+  sig=${sig:-missing}
+  for i in "${!_pause_cache_files[@]}"; do
+    if [ "${_pause_cache_files[$i]}" = "$file" ]; then
+      if [ "${_pause_cache_sigs[$i]}" = "$sig" ]; then
+        [ "${_pause_cache_values[$i]}" = 1 ]
+        return
+      fi
+      if status_has_current_pause "$file"; then value=1; else value=0; fi
+      _pause_cache_sigs[i]=$sig
+      _pause_cache_values[i]=$value
+      [ "$value" = 1 ]
+      return
+    fi
+  done
+  if status_has_current_pause "$file"; then value=1; else value=0; fi
+  i=${#_pause_cache_files[@]}
+  _pause_cache_files[i]=$file
+  _pause_cache_sigs[i]=$sig
+  _pause_cache_values[i]=$value
+  [ "$value" = 1 ]
+}
 
 # afk_present: 0 while the away-mode flag exists. When set, the daemon wraps this
 # watcher and owns triage, so the watcher must behave one-shot (enqueue + exit on
@@ -354,7 +382,7 @@ pause_state_class() {  # <window> <task>
   key=${key//\//_}
   key=${key//./_}
   recheck_file="$STATE/.paused-rechecked-$key"
-  if ! status_has_current_pause "$STATE/$task.status"; then
+  if ! watch_status_has_current_pause "$STATE/$task.status"; then
     rm -f "$recheck_file"
     crew_absorb_class "$task"
     return
@@ -712,7 +740,7 @@ EOF
     key=${key//\//_}
     key=${key//./_}
     pause_open=0
-    status_has_current_pause "$STATE/$task.status" && pause_open=1
+    watch_status_has_current_pause "$STATE/$task.status" && pause_open=1
     if [ "$pause_open" != 1 ] && [ -e "$STATE/.paused-$key" ]; then
       clear_pause_tracking "$w"
     fi

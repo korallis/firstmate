@@ -43,6 +43,21 @@ mkrec() {  # <pane_id> <status>
   fm_transition_record "$1" "wG" "" "$2" claude
 }
 
+reset_state
+printf 'paused [key=owner]: waiting on owner\n' > "$STATE_DIR/cache.status"
+AWK_LOG="$TMP/awk-calls"
+: > "$AWK_LOG"
+# shellcheck disable=SC2329
+awk() { printf 'call\n' >> "$AWK_LOG"; command awk "$@"; }
+watch_status_has_current_pause "$STATE_DIR/cache.status" || fail "initial keyed pause was not detected"
+watch_status_has_current_pause "$STATE_DIR/cache.status" || fail "cached keyed pause changed value"
+[ "$(wc -l < "$AWK_LOG" | tr -d '[:space:]')" = 1 ] || fail "unchanged status signature rescanned the pause fold"
+printf 'resolved [key=owner]: owner resumed\n' >> "$STATE_DIR/cache.status"
+watch_status_has_current_pause "$STATE_DIR/cache.status" && fail "status append did not invalidate the cached pause fold"
+[ "$(wc -l < "$AWK_LOG" | tr -d '[:space:]')" = 2 ] || fail "changed status signature did not recompute the pause fold exactly once"
+unset -f awk
+pass "watch pause fold caches by status signature and invalidates on append"
+
 # --- handle_push_transition: enqueue + wake for a non-paused blocked crew -----
 
 reset_state
