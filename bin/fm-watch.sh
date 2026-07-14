@@ -300,21 +300,26 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
 # invisibly. Called on any stale poll once the crew is known paused (first sight,
 # after crew_absorb_class; and repeat sights, gated by the .paused-<key> flag), so
 # it must be cheap: it NEVER re-reads the crew state. The re-surface age is anchored
-# on the pause's own STATUS-FILE mtime, not a per-hash marker, so a churny idle pane
-# (a ticking clock, a token counter) cannot keep resetting the cadence the way a
-# hash-tied timer would. A .paused-resurfaced-<key> throttle marker records the last
-# re-surface epoch so, once past the window, it fires once per window rather than
-# every poll. Advances the stale suppressor to <hash> and flags the key paused.
+# on a first-observed pause marker, so later status events and a churny idle pane
+# cannot reset the cadence. A .paused-resurfaced-<key> throttle marker records the
+# last re-surface epoch so, once past the window, it fires once per window rather
+# than every poll. Advances the stale suppressor to <hash> and flags the key paused.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason
+  local win=$1 h=$3 key pausef observed age rf rf_age reason
   key=$(printf '%s' "$win" | tr ':/.' '___')
   printf '%s' "$h" > "$STATE/.stale-$key"
-  : > "$STATE/.paused-$key"
+  pausef="$STATE/.paused-$key"
+  [ -e "$pausef" ] || date +%s > "$pausef"
+  observed=$(cat "$pausef" 2>/dev/null || true)
+  case "$observed" in
+    ''|*[!0-9]*)
+      observed=$(stat_mtime "$pausef")
+      case "$observed" in ''|*[!0-9]*) observed=$(date +%s) ;; esac
+      printf '%s\n' "$observed" > "$pausef"
+      ;;
+  esac
   rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
-  statusf="$STATE/$task.status"
-  mtime=$(stat_mtime "$statusf")
-  case "$mtime" in ''|*[!0-9]*) mtime=$(date +%s) ;; esac
-  age=$(( $(date +%s) - mtime ))
+  age=$(( $(date +%s) - observed ))
   rf="$STATE/.paused-resurfaced-$key"
   rf_age=$(age_of "$rf")   # 999999 when no prior re-surface
   if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
@@ -546,14 +551,12 @@ event_wait_or_sleep() {
 }
 
 # handle_push_transition: act on a fresh actionable (blocked) transition record
-# the backend returned. Maps the pane back to its window and task, applies the
-# declared-pause exemption (a crew waiting on a known external dependency is not
-# a surprise block - absorb it on the poll loop's long pause cadence instead),
-# and otherwise enqueues an immediate `stale` wake and wakes the supervisor. The
-# `stale` kind is deliberate: the supervisor's handler for it ("peek the pane to
-# diagnose") is exactly right for a blocked crew, and the drain/dedupe/guard
-# machinery already understands it (queued by key=window, so a later poll-path
-# stale for the same pane collapses on drain).
+# the backend returned. Maps the pane back to its window and task, enqueues an
+# immediate `stale` wake, and wakes the supervisor. The `stale` kind is deliberate:
+# the supervisor's handler for it ("peek the pane to diagnose") is exactly right
+# for a blocked crew, and the drain/dedupe/guard machinery already understands it
+# (queued by key=window, so a later poll-path stale for the same pane collapses on
+# drain).
 handle_push_transition() {  # <backend> <session> <record>
   local backend=$1 session=$2 record=$3 pane_id to window task reason
   pane_id=$(fm_transition_pane_id "$record")
@@ -561,11 +564,6 @@ handle_push_transition() {  # <backend> <session> <record>
   [ -n "$pane_id" ] || { sleep 1; return; }
   window="$session:$pane_id"
   task=$(window_to_task "$window" "$STATE")
-  if status_has_current_pause "$STATE/$task.status"; then
-    triage_log "absorbed push $to (declared pause, awaiting external): $window"
-    fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
-    return
-  fi
   reason="stale: $window (herdr: agent $to - waiting on human, escalated immediately, not via wedge timer)"
   fm_wake_append stale "$window" "$reason" || exit 1
   fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1

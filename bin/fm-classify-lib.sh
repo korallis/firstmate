@@ -344,11 +344,24 @@ signal_reason_is_actionable() {  # <file> ...
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
+crew_current_state_line() {  # <id>
+  local id=$1 line
+  [ -n "$id" ] || return 1
+  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  case "$line" in state:*) printf '%s' "$line" ;; *) return 1 ;; esac
+}
+
+crew_current_state() {  # <id>
+  local line state
+  line=$(crew_current_state_line "$1") || { printf 'unknown'; return; }
+  state=${line#state: }
+  printf '%s' "${state%% *}"
+}
+
 crew_absorb_class() {  # <id>
   local id=$1 line state src
   [ -n "$id" ] || { printf 'none'; return; }
-  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
-  case "$line" in state:*) ;; *) printf 'none'; return ;; esac
+  line=$(crew_current_state_line "$id") || { printf 'none'; return; }
   state=${line#state: }; state=${state%% *}
   if [ "$state" = paused ]; then printf 'paused'; return; fi
   if [ "$state" = working ]; then

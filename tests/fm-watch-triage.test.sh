@@ -575,8 +575,8 @@ test_nonterminal_stale_not_working_surfaced() {
 # when a later resolution closes some other key. The watcher must retain pause
 # tracking across repeated polls instead of surfacing stale every few polls or
 # starting a wedge timer. It still re-surfaces once past PAUSE_RESURFACE_SECS
-# (anchored on the status-file age, so a churny idle pane cannot reset the cadence)
-# for a recheck, so a forgotten pause cannot rot invisibly.
+# from its independent first-observed timestamp, which unrelated status appends
+# cannot reset, so a forgotten pause cannot rot invisibly.
 test_green_external_wait_stale_absorbed_repeatedly_then_resurfaced() {
   local dir state fakebin out drain_out capture_file window key pane_hash sig pid back statusf
   dir=$(make_case nonterminal-stale-paused); state="$dir/state"; fakebin="$dir/fakebin"
@@ -615,12 +615,12 @@ test_green_external_wait_stale_absorbed_repeatedly_then_resurfaced() {
   [ ! -e "$state/.stale-since-$key" ] || fail "a paused absorb must not start the wedge timer"
   reap "$pid"
 
-  # Phase B: age the pause past the (now normal) threshold by backdating its
-  # status file, re-prime .seen-* to the new signature so the signal scan stays
-  # quiet, and confirm it re-surfaces as a paused recheck - never a wedge.
+  # Phase B: age the independent pause-observation timestamp past the normal
+  # threshold, append unrelated status churn, and confirm the pause still
+  # re-surfaces as a paused recheck - never a wedge.
   back=$(( $(date +%s) - 500 ))
-  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
-  else touch -m -d "@$back" "$statusf"; fi
+  printf '%s\n' "$back" > "$state/.paused-$key"
+  printf 'resolved [key=another]: another unrelated wait cleared\n' >> "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
   : > "$out"
   printf 'idle, holding for upstream (token 2)' > "$capture_file"
@@ -655,6 +655,7 @@ test_secondmate_paused_resurfaces_in_normal_mode() {
   pane_hash=$(hash_text "idle awaiting external")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
+  printf '%s\n' "$back" > "$state/.paused-$key"
   export FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting the upstream release'
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \

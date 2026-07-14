@@ -65,18 +65,17 @@ fm_write_meta "$STATE_DIR/tk1.meta" "window=default:wG:pQ" "backend=herdr" "kind
 [ ! -e "$STATE_DIR/.herdr-escalated-default_wG_pQ" ] || fail "a failed durable enqueue must leave the blocked edge eligible for reconnect reconciliation"
 pass "handle_push_transition: enqueue failure cannot commit the Herdr dedupe marker"
 
-# --- handle_push_transition: absorb (no wake, no enqueue) for a declared pause -
+# --- handle_push_transition: a fresh blocked edge outranks an old pause -------
 
 reset_state
 fm_write_meta "$STATE_DIR/tk2.meta" "window=default:wG:pQ" "backend=herdr" "kind=ship"
-printf 'paused: waiting on the upstream release\n' > "$STATE_DIR/tk2.status"
+printf 'paused [key=upstream]: waiting on the upstream release\nresolved [key=other]: unrelated wait cleared\n' > "$STATE_DIR/tk2.status"
 handle_push_transition herdr default "$(mkrec wG:pQ blocked)"
-if [ -e "$STATE_DIR/.wake-queue" ] && grep -q 'stale' "$STATE_DIR/.wake-queue"; then
-  fail "a declared-pause crew must NOT be fast-escalated: $(cat "$STATE_DIR/.wake-queue")"
-fi
-[ ! -s "$WAKE_LOG" ] || fail "a declared-pause crew must not wake the supervisor from the event fast-path"
-grep -q 'absorbed push' "$STATE_DIR/.watch-triage.log" 2>/dev/null || fail "the paused absorb should be logged to the triage log"
-pass "handle_push_transition: a declared-pause crew is absorbed (no fast wake), left to the poll loop's long cadence"
+[ -e "$STATE_DIR/.wake-queue" ] || fail "a blocked transition behind an open pause was not enqueued"
+grep -q 'herdr: agent blocked' "$STATE_DIR/.wake-queue" || fail "the blocked transition lost its actionable reason"
+[ -s "$WAKE_LOG" ] || fail "a fresh blocked transition behind an open pause did not wake the supervisor"
+[ -e "$STATE_DIR/.herdr-escalated-default_wG_pQ" ] || fail "the surfaced blocked transition was not committed"
+pass "handle_push_transition: a fresh blocked edge overrides an open pause"
 
 # --- event_wait_or_sleep: secondmate windows are excluded from the pane list --
 

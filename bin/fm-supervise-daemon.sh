@@ -353,17 +353,30 @@ classify_signal() {  # <reason-after-colon> <state>
 # first sight of a non-terminal stale it returns "self" and the caller records a
 # timestamp marker; persistence is escalated by housekeeping's recheck, not here.
 classify_stale() {  # <window> <state>
-  local win=$1 state=$2 task last seen
+  local win=$1 state=$2 task last seen current
   task=$(window_to_task "$win" "$state")
   last=$(last_status_line "$state/$task.status")
-  if status_has_current_pause "$state/$task.status"; then
-    # A DECLARED external-wait pause (fm-classify-lib.sh): an idle pane is EXPECTED,
-    # so this is not a wedge. The caller records a pause marker (long re-surface
-    # cadence in housekeeping) rather than a wedge stale marker. The shared keyed
-    # fold keeps the pause current until its matching resolution.
-    printf 'pause|paused (awaiting external), rechecked on a long cadence: %s' "$last"
-    return
-  fi
+  current=$(crew_current_state "$task")
+  case "$current" in
+    paused)
+      printf 'pause|paused (awaiting external), rechecked on a long cadence: %s' "$last"
+      return
+      ;;
+    working)
+      printf 'self|transient stale (%s): authoritative crew state is working' "$win"
+      return
+      ;;
+    parked|blocked|failed|done)
+      seen="$state/.subsuper-seen-status-$(_stale_key "$task")"
+      if [ -n "$last" ] && status_is_captain_relevant "$last" \
+         && [ "$(cat "$seen" 2>/dev/null || true)" = "$last" ]; then
+        printf 'self|stale + authoritative %s (already escalated by signal): %s' "$current" "$last"
+      else
+        printf 'escalate|stale + authoritative crew state: %s: %s' "$current" "${last:-no status}"
+      fi
+      return
+      ;;
+  esac
   if [ -n "$last" ] && status_is_captain_relevant "$last"; then
     # Dedupe against the signal path: if this status was already escalated
     # (seen marker matches), self-handle to avoid a duplicate in the digest.
@@ -444,13 +457,19 @@ clear_pause_tracking() {  # <window> <state>
     "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key"
 }
 
+task_has_authoritative_pause() {  # <task> <state>
+  local task=$1 state=$2
+  status_has_current_pause "$state/$task.status" || return 1
+  [ "$(crew_current_state "$task")" = paused ]
+}
+
 reconcile_pause_tracking() {  # <window> <state> <last-status-line>
   local win=$1 state=$2 last=$3 task key marker watcher_key
   task=$(window_to_task "$win" "$state")
   key=$(_stale_key "$task")
   marker="$state/.subsuper-paused-$key"
   watcher_key=$(_stale_key "$win")
-  if status_has_current_pause "$state/$task.status"; then
+  if task_has_authoritative_pause "$task" "$state"; then
     stale_marker_remove "$win" "$state"
     pause_marker_record "$win" "$state"
   elif [ -e "$marker" ] || [ -e "$state/.paused-$watcher_key" ]; then
@@ -962,7 +981,7 @@ housekeeping() {  # <state>
     fi
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
-    if status_has_current_pause "$state/$task.status"; then
+    if task_has_authoritative_pause "$task" "$state"; then
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
@@ -993,7 +1012,7 @@ housekeeping() {  # <state>
     fi
     task=$(window_to_task "$win" "$state")
     last=$(last_status_line "$state/$task.status")
-    if ! status_has_current_pause "$state/$task.status"; then
+    if ! task_has_authoritative_pause "$task" "$state"; then
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
@@ -1005,7 +1024,7 @@ housekeeping() {  # <state>
       2) rm -f "$marker" ;;
       *)
         last=$(last_status_line "$state/$task.status")
-        if status_has_current_pause "$state/$task.status"; then
+        if task_has_authoritative_pause "$task" "$state"; then
           escalate_add "$state" "paused ${age}s (awaiting external, recheck whether the wait still holds): $win"
           _now > "$marker"
         else

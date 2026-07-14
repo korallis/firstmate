@@ -23,6 +23,26 @@ fi
 
 TMP_ROOT=$(fm_test_tmproot fm-daemon-tests)
 
+crew_current_state() {
+  local id=$1 state=${FM_STATE_OVERRIDE:-} last verb
+  if [ -n "${FM_TEST_CREW_STATE:-}" ]; then
+    printf '%s' "$FM_TEST_CREW_STATE"
+    return
+  fi
+  if status_has_current_pause "$state/$id.status"; then
+    printf 'paused'
+    return
+  fi
+  last=$(last_status_line "$state/$id.status")
+  verb=$(status_line_verb "$last")
+  case "$verb" in
+    working) printf 'working' ;;
+    needs-decision) printf 'parked' ;;
+    blocked|done|failed) printf '%s' "$verb" ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
 test_afk_start_refuses_when_flag_cannot_be_written() {
   local dir state out status
   dir=$(make_supercase afk-start-flag-unwritable)
@@ -165,6 +185,22 @@ test_stale_paused_classifies_pause() {
   out=$(FM_STATE_OVERRIDE="$state" classify_stale "sess:fm-held-w9" "$state")
   case "$out" in pause\|*) ;; *) fail "declared pause did not classify as pause: $out" ;; esac
   pass "paused reasons with captain phrases remain pause-classified"
+}
+
+test_stale_pause_yields_to_authoritative_run_states() {
+  local dir state out current
+  dir=$(make_supercase stale-pause-precedence)
+  state="$dir/state"
+  printf 'paused [key=upstream]: awaiting upstream owner\nresolved [key=other]: unrelated wait cleared\n' > "$state/held-precedence.status"
+
+  out=$(FM_STATE_OVERRIDE="$state" FM_TEST_CREW_STATE=working classify_stale "sess:fm-held-precedence" "$state")
+  case "$out" in self\|*) ;; *) fail "active work behind a pause did not self-handle as working: $out" ;; esac
+
+  for current in parked blocked failed done; do
+    out=$(FM_STATE_OVERRIDE="$state" FM_TEST_CREW_STATE="$current" classify_stale "sess:fm-held-precedence" "$state")
+    case "$out" in escalate\|*"$current"*) ;; *) fail "authoritative $current state was hidden by an open pause: $out" ;; esac
+  done
+  pass "away stale classification gives active, parked, failed, and terminal run states precedence over pauses"
 }
 
 # handle_wake on a paused stale records a pause marker, drops any pre-existing wedge
@@ -1658,6 +1694,7 @@ test_classify_check_and_unknown_escalate
 test_stale_transient_self_records_marker
 test_stale_terminal_escalates
 test_stale_paused_classifies_pause
+test_stale_pause_yields_to_authoritative_run_states
 test_handle_wake_paused_records_pause_marker
 test_handle_wake_paused_signal_records_pause_marker
 test_handle_wake_terminal_signal_clears_pause_tracking
