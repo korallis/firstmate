@@ -457,10 +457,41 @@ clear_pause_tracking() {  # <window> <state>
     "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key"
 }
 
+FM_PAUSE_CACHE_ACTIVE=0
+FM_PAUSE_CACHE_TASKS=()
+FM_PAUSE_CACHE_VERDICTS=()
+
+pause_cache_reset() {
+  FM_PAUSE_CACHE_ACTIVE=1
+  FM_PAUSE_CACHE_TASKS=()
+  FM_PAUSE_CACHE_VERDICTS=()
+}
+
+pause_cache_finish() {
+  FM_PAUSE_CACHE_ACTIVE=0
+  FM_PAUSE_CACHE_TASKS=()
+  FM_PAUSE_CACHE_VERDICTS=()
+}
+
 task_has_authoritative_pause() {  # <task> <state>
-  local task=$1 state=$2
-  status_has_current_pause "$state/$task.status" || return 1
-  [ "$(crew_current_state "$task")" = paused ]
+  local task=$1 state=$2 current verdict=0 i
+  if [ "$FM_PAUSE_CACHE_ACTIVE" = 1 ]; then
+    for ((i = 0; i < ${#FM_PAUSE_CACHE_TASKS[@]}; i++)); do
+      if [ "${FM_PAUSE_CACHE_TASKS[$i]}" = "$task" ]; then
+        [ "${FM_PAUSE_CACHE_VERDICTS[$i]}" = 1 ]
+        return
+      fi
+    done
+  fi
+  if status_has_current_pause "$state/$task.status"; then
+    current=$(crew_current_state "$task")
+    [ "$current" = paused ] && verdict=1
+  fi
+  if [ "$FM_PAUSE_CACHE_ACTIVE" = 1 ]; then
+    FM_PAUSE_CACHE_TASKS[${#FM_PAUSE_CACHE_TASKS[@]}]=$task
+    FM_PAUSE_CACHE_VERDICTS[${#FM_PAUSE_CACHE_VERDICTS[@]}]=$verdict
+  fi
+  [ "$verdict" = 1 ]
 }
 
 reconcile_pause_tracking() {  # <window> <state> <last-status-line>
@@ -487,7 +518,7 @@ migrate_watcher_pause_markers() {  # <state>
     key=$(_stale_key "$task")
     watcher_key=$(_stale_key "$win")
     last=$(last_status_line "$state/$task.status")
-    if status_has_current_pause "$state/$task.status" || [ -e "$state/.subsuper-paused-$key" ] || [ -e "$state/.paused-$watcher_key" ]; then
+    if task_has_authoritative_pause "$task" "$state" || [ -e "$state/.subsuper-paused-$key" ] || [ -e "$state/.paused-$watcher_key" ]; then
       reconcile_pause_tracking "$win" "$state" "$last"
     fi
   done
@@ -936,6 +967,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 housekeeping() {  # <state>
   local state=$1 now due f key task win marker age last max_defer oldest pause_secs
   now=$(_now)
+  pause_cache_reset
   migrate_watcher_pause_markers "$state"
 
   # (1) batch flush
@@ -1049,6 +1081,7 @@ housekeeping() {  # <state>
       mark_status_seen "$state" "$task" "$last"
     done < <(scan_captain_relevant_statuses "$state")
   fi
+  pause_cache_finish
 }
 
 # Find a recorded or live window target whose task id matches the marker key.

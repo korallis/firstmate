@@ -310,6 +310,34 @@ test_housekeeping_seeds_pause_marker_from_status() {
   pass "housekeeping seeds pause tracking from status without a watcher marker"
 }
 
+test_housekeeping_caches_pause_verdict_per_task() {
+  local dir state key win pause_calls state_calls
+  dir=$(make_supercase pause-verdict-cache)
+  state="$dir/state"
+  win="sess:fm-held-cache"
+  printf 'window=%s\nkind=ship\n' "$win" > "$state/held-cache.meta"
+  printf 'paused [key=upstream]: awaiting the upstream release\n' > "$state/held-cache.status"
+  key=$(printf '%s' "held-cache" | tr '.:/' '___')
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
+  (
+    eval "$(declare -f status_has_current_pause | sed '1s/status_has_current_pause/uncached_status_has_current_pause/')"
+    status_has_current_pause() {
+      printf 'scan\n' >> "$state/pause-calls"
+      uncached_status_has_current_pause "$@"
+    }
+    crew_current_state() {
+      printf 'read\n' >> "$state/state-calls"
+      printf 'paused'
+    }
+    FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=999999 housekeeping "$state"
+  )
+  pause_calls=$(wc -l < "$state/pause-calls")
+  state_calls=$(wc -l < "$state/state-calls")
+  [ "$pause_calls" -eq 1 ] || fail "housekeeping scanned one task's pause fold $pause_calls times"
+  [ "$state_calls" -eq 1 ] || fail "housekeeping read one task's authoritative state $state_calls times"
+  pass "housekeeping reuses one pause verdict per task and cycle"
+}
+
 # housekeeping re-surfaces a stale declared pause only past PAUSE_RESURFACE_SECS,
 # as an awaiting-external recheck (never a wedge), and RESETS the marker so the
 # window repeats rather than firing once.
@@ -1701,6 +1729,7 @@ test_handle_wake_terminal_signal_clears_pause_tracking
 test_housekeeping_migrates_watcher_pause_marker
 test_housekeeping_migrates_watcher_unpaused_marker_to_clear
 test_housekeeping_seeds_pause_marker_from_status
+test_housekeeping_caches_pause_verdict_per_task
 test_housekeeping_persistent_stale_escalates
 test_housekeeping_resumed_stale_cleared
 test_housekeeping_paused_resurfaces_and_resets
