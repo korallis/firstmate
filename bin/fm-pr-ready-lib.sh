@@ -2,9 +2,9 @@
 # Persistent authoritative PR-readiness transition detection for fm-watch.sh.
 #
 # fm-crew-state.sh remains the single owner of branch-matched no-mistakes state.
-# This library periodically reads that state for an absorbed stale no-mistakes
-# ship task, classifies only `done + run-step + checks green: PR ready for review`
-# as ready, and returns one actionable transition record at a time.
+# This library periodically reads that state during the watcher's bounded task
+# scan, classifies only `done + run-step + checks green: PR ready for review` as
+# ready, and returns one actionable transition record at a time.
 #
 # A per-task state/.pr-ready-<id> marker suppresses the same readiness identity
 # across watcher generations. The identity includes the branch HEAD and canonical

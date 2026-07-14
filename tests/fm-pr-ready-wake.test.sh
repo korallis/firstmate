@@ -50,6 +50,24 @@ commit_record() {  # <state> <record>
   fm_pr_ready_commit "$state" "$id" "$identity"
 }
 
+install_dynamic_crew_state() {  # <fakebin>
+  cat > "$1/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+cat "${FM_FAKE_CREW_STATE_FILE:?}"
+SH
+  chmod +x "$1/fm-crew-state.sh"
+}
+
+wait_for_marker_clear() {  # <marker> <pid>
+  local marker=$1 pid=$2 n=0
+  while [ -e "$marker" ] && [ "$n" -lt 50 ]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    sleep 0.1
+    n=$((n + 1))
+  done
+  [ ! -e "$marker" ]
+}
+
 test_background_ci_fixer_wakes_before_stale_status() {
   local dir state fakebin out pid drain key pane_hash
   dir=$(make_case background-ci-fixer); state="$dir/state"; fakebin="$dir/fakebin"
@@ -129,6 +147,61 @@ test_relapse_rearm_and_head_change_supersede_green() {
   pass "re-arm, failed checks, and a CI-fixer head change supersede prior green readiness"
 }
 
+test_busy_pane_rearm_is_observed_by_task_scan() {
+  local dir state fakebin record marker state_line out pid
+  dir=$(make_case busy-pane-rearm); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" busy-rearm off
+  record=$(next_ready "$state" "$fakebin" busy-rearm "$READY_LINE")
+  commit_record "$state" "$record"
+  marker="$state/.pr-ready-busy-rearm"
+  state_line="$dir/crew-state"
+  printf '%s\n' "$WORKING_LINE" > "$state_line"
+  install_dynamic_crew_state "$fakebin"
+  printf 'Working...\n' > "$dir/pane"
+  out="$dir/watch.out"
+  FM_FAKE_CREW_STATE_FILE="$state_line" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_marker_clear "$marker" "$pid" || { reap "$pid"; fail "busy-pane re-arm did not clear prior readiness"; }
+  printf '%s\n' "$READY_LINE" > "$state_line"
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "busy-pane green recovery did not wake"; }
+  grep -F "check: authoritative PR-ready transition for busy-rearm" "$out" >/dev/null \
+    || fail "busy-pane green recovery did not emit a fresh transition"
+  pass "bounded task scans observe re-arm and renewed green while the pane is busy"
+}
+
+test_changing_pane_failure_is_observed_by_task_scan() {
+  local dir state fakebin record marker state_line out pid key old_hash
+  dir=$(make_case changing-pane-failure); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" changing-failure off
+  record=$(next_ready "$state" "$fakebin" changing-failure "$READY_LINE")
+  commit_record "$state" "$record"
+  marker="$state/.pr-ready-changing-failure"
+  state_line="$dir/crew-state"
+  printf '%s\n' "$FAILED_LINE" > "$state_line"
+  install_dynamic_crew_state "$fakebin"
+  printf 'new changing pane\n' > "$dir/pane"
+  key=$(printf '%s' 'test:fm-changing-failure' | tr ':/.' '___')
+  old_hash=$(hash_text 'old pane')
+  printf '%s' "$old_hash" > "$state/.hash-$key"
+  out="$dir/watch.out"
+  FM_FAKE_CREW_STATE_FILE="$state_line" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_marker_clear "$marker" "$pid" || { reap "$pid"; fail "changing-pane failure did not clear prior readiness"; }
+  printf '%s\n' "$READY_LINE" > "$state_line"
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "changing-pane green recovery did not wake"; }
+  grep -F "check: authoritative PR-ready transition for changing-failure" "$out" >/dev/null \
+    || fail "changing-pane green recovery did not emit a fresh transition"
+  pass "bounded task scans observe failure and renewed green while the pane changes"
+}
+
 test_approval_posture_changes_reason_not_authority() {
   local dir state fakebin first second
   dir=$(make_case approval-posture); state="$dir/state"; fakebin="$dir/fakebin"
@@ -185,6 +258,8 @@ test_keyed_pause_precedence_and_stale_absorption() {
 test_background_ci_fixer_wakes_before_stale_status
 test_duplicate_suppression_across_watcher_generations
 test_relapse_rearm_and_head_change_supersede_green
+test_busy_pane_rearm_is_observed_by_task_scan
+test_changing_pane_failure_is_observed_by_task_scan
 test_approval_posture_changes_reason_not_authority
 test_keyed_pause_precedence_and_stale_absorption
 printf 'all fm-pr-ready wake tests passed\n'
