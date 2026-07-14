@@ -78,7 +78,9 @@ fm_pr_ready_identity() {  # <meta> <crew-state-line>
       ;;
   esac
   printf '%s|%s' "$branch" "$head"
-  [ -n "${authority:-}" ] && printf '|%s' "$authority"
+  if [ -n "${authority:-}" ]; then
+    printf '|%s' "$authority"
+  fi
 }
 
 fm_pr_ready_identity_relation() {  # <prior> <current>
@@ -88,7 +90,7 @@ fm_pr_ready_identity_relation() {  # <prior> <current>
   elif [ -n "$prior" ] && [ "${current#"$prior|"}" != "$current" ]; then
     added=${current#"$prior|"}
     case "$added" in
-      baseline) printf 'upgrade' ;;
+      baseline|*'|baseline') printf 'upgrade' ;;
       *) printf 'different' ;;
     esac
   elif [ -n "$current" ] && [ "${prior#"$current|"}" != "$prior" ]; then

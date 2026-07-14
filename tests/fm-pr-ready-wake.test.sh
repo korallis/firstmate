@@ -14,6 +14,7 @@ READY_LINE='state: done · source: run-step · checks green: PR ready for review
 ALT_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7|baseline · status-log event superseded by authoritative run'
 RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|relapse-1289303112:42'
 STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR · run-identity: run-7'
+COARSE_STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR'
 UNKNOWN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7'
 WORKING_LINE='state: working · source: run-step · ci running'
 FAILED_LINE='state: failed · source: run-step · run failed'
@@ -183,6 +184,20 @@ test_done_status_seeds_next_generation_dedupe() {
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "next generation queued duplicate readiness"; }
   reap "$pid"
   pass "done/checks-green signal suppresses duplicate readiness in the next watcher generation"
+}
+
+test_coarse_status_refines_to_authoritative_baseline() {
+  local dir state fakebin first known marker
+  dir=$(make_case coarse-status-refinement); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" coarse-status off
+  first=$(next_ready "$state" "$fakebin" coarse-status "$COARSE_STATUS_READY_LINE")
+  [ -n "$first" ] || fail "coarse status readiness missed its first transition"
+  commit_record "$state" "$first"
+  known=$(next_ready "$state" "$fakebin" coarse-status "$READY_LINE")
+  [ -z "$known" ] || fail "authoritative baseline duplicated coarse status readiness"
+  marker=$(cat "$state/.pr-ready-coarse-status")
+  case "$marker" in *'run-7|baseline') ;; *) fail "authoritative baseline did not refine the coarse marker" ;; esac
+  pass "coarse status readiness refines to authoritative baseline without a duplicate"
 }
 
 test_unknown_generation_upgrades_without_duplicate() {
@@ -413,6 +428,7 @@ test_background_ci_fixer_wakes_before_stale_status
 test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
+test_coarse_status_refines_to_authoritative_baseline
 test_unknown_generation_upgrades_without_duplicate
 test_unknown_generation_refinement_preserves_relapse
 test_transient_git_identity_failure_preserves_marker
