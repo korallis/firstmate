@@ -534,6 +534,11 @@ test_checks_passed_run_with_keyed_pause_reports_paused_until_resolved() {
   out=$(run_crew_state "$d" feat-upstream-wait)
   assert_contains "$out" "state: paused" "mismatched resolution must not close the keyed pause"
 
+  printf 'paused [key=vendor-window]: vendor maintenance\nresolved [key=vendor-window]: vendor resumed\n' >> "$d/state/feat-upstream-wait.status"
+  out=$(run_crew_state "$d" feat-upstream-wait)
+  assert_contains "$out" "state: paused" "resolving a newer pause restores the earlier still-open pause"
+  assert_contains "$out" "awaiting its upstream owner" "the restored pause retains its original reason"
+
   printf 'resolved [key=upstream-owner-pr-537]: upstream owner merged PR 537\n' >> "$d/state/feat-upstream-wait.status"
   out=$(run_crew_state "$d" feat-upstream-wait)
   assert_contains "$out" "state: done" "matching resolution restores checks-passed state"

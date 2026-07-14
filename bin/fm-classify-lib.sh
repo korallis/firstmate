@@ -141,48 +141,90 @@ _fm_status_key() {  # <status-line> -> key slug, or "default" when no token
     *) printf 'default' ;;
   esac
 }
-# Drop the record for <key> from a newline-separated "<key>\t<verb>\t<note>" set.
-# Portable (no associative arrays) so the fold runs on bash 3.2 as well as 4+.
-_fm_status_key_drop() {  # <open-set> <key>
-  local set=$1 key=$2 line out=''
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    case "$line" in
-      "$key"$'\t'*) : ;;
-      *) [ -n "$out" ] && out="${out}"$'\n'; out="${out}${line}" ;;
-    esac
-  done <<EOF
-$set
-EOF
-  printf '%s' "$out"
-}
 # Fold the WHOLE status stream for a space-separated set of opening verbs.
 # Prints one TAB-separated "<key>\t<verb>\t<note>" line per still-open event in most-recently-opened-last order.
+# With mode=current, prints only the newest still-open event after the latest real state transition.
 # Prints nothing when none are open.
-_fm_status_open_events() {  # <status-file> <space-separated-opening-verbs>
-  local f=$1 opening_verbs=$2 line verb key note resolve open='' stripped
+_fm_status_open_events() {  # <status-file> <space-separated-opening-verbs> [open|current]
+  local f=$1 opening_verbs=$2 mode=${3:-open} resolve
   [ -f "$f" ] || return 0
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
-  while IFS= read -r line || [ -n "$line" ]; do
-    stripped=${line//[[:space:]]/}
-    [ -n "$stripped" ] || continue
-    verb=$(status_line_verb "$line")
-    key=$(_fm_status_key "$line") || continue
-    case " $opening_verbs " in
-      *" $verb "*)
-        note=$(status_line_note "$line")
-        open=$(_fm_status_key_drop "$open" "$key")
-        [ -n "$open" ] && open="${open}"$'\n'
-        open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"
-        ;;
-      *)
-        if [ "$verb" = "$resolve" ]; then
-          open=$(_fm_status_key_drop "$open" "$key")
-        fi
-        ;;
-    esac
-  done < "$f"
-  printf '%s' "$open"
+  awk -v opening="$opening_verbs" -v resolve="$resolve" -v mode="$mode" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    function line_verb(line, prefix) {
+      prefix = line
+      sub(/:.*/, "", prefix)
+      sub(/\[key=.*/, "", prefix)
+      return trim(prefix)
+    }
+    function line_key(line, prefix, start, rest, ending, key) {
+      prefix = line
+      sub(/:.*/, "", prefix)
+      start = index(prefix, "[key=")
+      if (!start) return "default"
+      rest = substr(prefix, start + 5)
+      ending = index(rest, "]")
+      if (!ending) return "default"
+      key = substr(rest, 1, ending - 1)
+      if (key == "" || key ~ /[^A-Za-z0-9._-]/) return ""
+      return key
+    }
+    function line_note(line, colon, note) {
+      colon = index(line, ":")
+      if (!colon) return line
+      note = substr(line, colon + 1)
+      sub(/^[[:space:]]+/, "", note)
+      return note
+    }
+    /^[[:space:]]*$/ { next }
+    {
+      verb = line_verb($0)
+      key = line_key($0)
+      is_opening = index(" " opening " ", " " verb " ") > 0
+      if (key == "") {
+        if (mode == "current" && is_opening) barrier = NR
+        next
+      }
+      if (is_opening) {
+        opened[key] = NR
+        opened_key[NR] = key
+        opened_verb[key] = verb
+        opened_note[key] = line_note($0)
+        next
+      }
+      if (verb == resolve) {
+        delete opened[key]
+        delete opened_verb[key]
+        delete opened_note[key]
+        next
+      }
+      if (mode == "current" && verb ~ /^(working|needs-decision|blocked|done|failed)$/) barrier = NR
+    }
+    END {
+      if (mode == "current") {
+        newest = 0
+        for (key in opened) {
+          if (opened[key] > barrier && opened[key] > newest) {
+            newest = opened[key]
+            selected = key
+          }
+        }
+        if (newest) printf "%s\t%s\t%s", selected, opened_verb[selected], opened_note[selected]
+        exit
+      }
+      for (i = 1; i <= NR; i++) {
+        key = opened_key[i]
+        if (key != "" && opened[key] == i) {
+          if (printed++) printf "\n"
+          printf "%s\t%s\t%s", key, opened_verb[key], opened_note[key]
+        }
+      }
+    }
+  ' "$f"
 }
 # Durable captain-decision set used by the fleet snapshot and other point-in-time consumers.
 status_open_decisions() {  # <status-file>
@@ -199,26 +241,7 @@ status_open_pauses() {  # <status-file>
 # even if the crew omitted its resolution, so an old pause can never hide a stopped
 # or terminal crew.
 status_current_pause() {  # <status-file>
-  local f=$1 line verb current='' key open record
-  [ -f "$f" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    verb=$(status_line_verb "$line")
-    if status_is_paused "$line"; then
-      current=$line
-      continue
-    fi
-    case "$verb" in
-      working|needs-decision|blocked|done|failed) current=$line ;;
-    esac
-  done < "$f"
-  status_is_paused "$current" || return 0
-  key=$(_fm_status_key "$current") || return 0
-  open=$(status_open_pauses "$f")
-  while IFS= read -r record; do
-    case "$record" in "$key"$'\t'*) printf '%s' "$record"; return 0 ;; esac
-  done <<EOF
-$open
-EOF
+  _fm_status_open_events "$1" "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}" current
 }
 status_has_current_pause() {  # <status-file>
   [ -n "$(status_current_pause "$1")" ]

@@ -168,6 +168,10 @@ EOF
   pause=$(status_current_pause "$state/pause-keys.status")
   printf '%s' "$pause" | grep -F $'upstream\tpaused\twaiting on owner' >/dev/null \
     || fail "an unrelated keyed resolution closed or hid the current pause"
+  printf 'paused [key=vendor]: waiting on vendor\nresolved [key=vendor]: vendor resumed\n' >> "$state/pause-keys.status"
+  pause=$(status_current_pause "$state/pause-keys.status")
+  printf '%s' "$pause" | grep -F $'upstream\tpaused\twaiting on owner' >/dev/null \
+    || fail "resolving the newest pause did not restore an earlier still-open pause"
   printf 'working: resumed without a resolution\n' >> "$state/pause-keys.status"
   status_has_current_pause "$state/pause-keys.status" \
     && fail "a later working state left an old pause effective (stale-safety regression)"
@@ -176,6 +180,13 @@ EOF
   printf 'resolved [key=upstream]: owner merged\n' >> "$state/pause-keys.status"
   [ -z "$(status_open_pauses "$state/pause-keys.status")" ] \
     || fail "a matching keyed resolution did not close the durable pause"
+  printf 'awaiting [key=custom]: maintenance\ncleared [key=other]: unrelated\n' > "$state/custom-pause.status"
+  pause=$(FM_CLASSIFY_PAUSED_VERB=awaiting FM_CLASSIFY_RESOLVE_VERB=cleared status_current_pause "$state/custom-pause.status")
+  printf '%s' "$pause" | grep -F $'custom\tawaiting\tmaintenance' >/dev/null \
+    || fail "custom pause and resolution verbs were not preserved"
+  printf 'cleared [key=custom]: maintenance complete\n' >> "$state/custom-pause.status"
+  [ -z "$(FM_CLASSIFY_PAUSED_VERB=awaiting FM_CLASSIFY_RESOLVE_VERB=cleared status_current_pause "$state/custom-pause.status")" ] \
+    || fail "the custom resolution verb did not close the custom pause"
   pass "classifier primitives: keyed decisions, pauses, and activity phases, captain relevance, window-to-task, and overrides"
 }
 
