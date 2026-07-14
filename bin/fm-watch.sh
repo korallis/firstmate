@@ -31,7 +31,7 @@
 #                          wake payload itself, not just repetition, forces a
 #                          closer look instead of another routine supervision
 #                          resume. Unless afk is active.
-#   check: <script>: <out> per-task check output, always actionable
+#   check: <script>: <out> per-task check output or an authoritative PR-ready transition, always actionable
 #   heartbeat              fleet-scan backstop found an unsurfaced captain-relevant
 #                          status, unless afk is active
 # For normal supervision, resume the session-start primary-harness protocol
@@ -52,6 +52,11 @@ mkdir -p "$STATE"
 # has one definition.
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
+# Persistent checks-green transition detection is separate from status/pane
+# classification so a background CI fixer can wake Firstmate without a new
+# status append, pane change, or agent turn.
+# shellcheck source=bin/fm-pr-ready-lib.sh
+. "$SCRIPT_DIR/fm-pr-ready-lib.sh"
 # The DEFAULT EVENT SOURCE: this watcher's poll loop over the pull primitives
 # (capture, recorded windows, backend busy-state, and the BUSY_REGEX fallback)
 # synthesizes the signal/stale/check/heartbeat wake vocabulary for backends with
@@ -99,6 +104,7 @@ HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
+PR_READY_SCAN_INTERVAL=${FM_PR_READY_SCAN_INTERVAL:-30}  # seconds between authoritative PR-ready rechecks for absorbed stale validation
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
@@ -262,16 +268,38 @@ wake() {
 # below).
 FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 
+# Re-read a branch-matched no-mistakes run only for a pane already absorbed as
+# stale-but-working. This closes the background CI-fixer gap without querying
+# every implementation task on every poll. The per-task cadence and readiness
+# marker persist across watcher generations.
+pr_ready_recheck() {  # <window>
+  local win=$1 task key scan_file record ready_id ready_identity ready_reason
+  task=$(window_to_task "$win" "$STATE")
+  [ -n "$task" ] || return 0
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  scan_file="$STATE/.last-pr-ready-$key"
+  [ "$(age_of "$scan_file")" -ge "$PR_READY_SCAN_INTERVAL" ] || return 0
+  record=$(fm_pr_ready_transition "$STATE" "$task" || true)
+  if [ -n "$record" ]; then
+    IFS=$'\t' read -r ready_id ready_identity ready_reason <<< "$record"
+    fm_wake_append check "pr-ready:$ready_id" "$ready_reason" || exit 1
+    fm_pr_ready_commit "$STATE" "$ready_id" "$ready_identity" || exit 1
+    touch "$scan_file"
+    wake "$ready_reason"
+  fi
+  touch "$scan_file"
+}
+
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
-# watcher restart between recording the hash and recording the timer), or
-# escalates once STALE_ESCALATE_SECS have elapsed. Never re-reads the crew
-# state (the costly check already ran once, at classification time). Shared by
-# both places a hash can be absorbed this way: the plain non-terminal path,
-# and the stale_is_terminal-overridden path (a captain-relevant status-log
-# line that an active run/busy pane outranked).
+# watcher restart between recording the hash and recording the timer), rechecks
+# authoritative PR readiness on its own bounded cadence, or escalates once
+# STALE_ESCALATE_SECS have elapsed. Shared by both places a hash can be absorbed
+# this way: the plain non-terminal path, and the stale_is_terminal-overridden
+# path (a captain-relevant status-log line that an active run/busy pane outranked).
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 since age n reason
+  pr_ready_recheck "$win"
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -369,6 +397,7 @@ pause_state_class() {  # <window> <task>
 
 surface_nonterminal_stale() {  # <window> <hash>
   local win=$1 h=$2 key
+  pr_ready_recheck "$win"
   key=$(printf '%s' "$win" | tr ':/.' '___')
   fm_wake_append stale "$win" "stale: $win" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
@@ -774,6 +803,7 @@ EOF
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
             else
+              pr_ready_recheck "$w"
               fm_wake_append stale "$w" "stale: $w" || exit 1
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
