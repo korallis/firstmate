@@ -767,7 +767,7 @@ test_ci_log_snapshot_preserves_split_event_lines() {
   pass "CI generation defers incomplete event lines until a later snapshot completes them"
 }
 
-test_ci_log_shrink_rebaselines_without_replaying_relapse() {
+test_ci_log_shrink_preserves_fresh_relapse() {
   local dir state log result
   dir=$(make_case ci-log-shrink); state="$dir/state"
   log="$dir/nm/logs/run-shrink/ci.log"
@@ -779,12 +779,35 @@ test_ci_log_shrink_rebaselines_without_replaying_relapse() {
     log=$3
     initial=$(fm_pr_ready_ci_generation "$state" shrink run-shrink GNG)
     printf "checks failed: unit\nall CI checks passed - still monitoring until merged or closed\n" > "$log"
-    rotated=$(fm_pr_ready_ci_generation "$state" shrink run-shrink GNG)
-    unchanged=$(fm_pr_ready_ci_generation "$state" shrink run-shrink GNG)
+    rotated=$(fm_pr_ready_ci_generation "$state" shrink run-shrink NG)
+    unchanged=$(fm_pr_ready_ci_generation "$state" shrink run-shrink NG)
     printf "%s:%s:%s" "$initial" "$rotated" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
-  [ "$result" = "1:1:1" ] || fail "shrunk CI log replayed old relapse history: $result"
-  pass "CI log shrink establishes a new sequence baseline"
+  [ "$result" = "1:2:2" ] || fail "shrunk CI log skipped a fresh relapse: $result"
+  pass "CI log shrink preserves fresh relapse transitions"
+}
+
+test_ci_log_truncate_regrow_preserves_fresh_relapse() {
+  local dir state log result
+  dir=$(make_case ci-log-truncate-regrow); state="$dir/state"
+  log="$dir/nm/logs/run-truncate-regrow/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\nold padding that keeps the original snapshot long enough\n' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    initial=$(fm_pr_ready_ci_generation "$state" truncate-regrow run-truncate-regrow G)
+    old_size=$(fm_pr_ready_file_size "$log")
+    printf "checks failed: unit\nall CI checks passed - still monitoring until merged or closed\n" > "$log"
+    while [ "$(fm_pr_ready_file_size "$log")" -lt "$old_size" ]; do printf x >> "$log"; done
+    printf "\n" >> "$log"
+    recovered=$(fm_pr_ready_ci_generation "$state" truncate-regrow run-truncate-regrow NG)
+    unchanged=$(fm_pr_ready_ci_generation "$state" truncate-regrow run-truncate-regrow NG)
+    printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
+  [ "$result" = "0:1:1" ] || fail "truncate-regrow CI log skipped a fresh relapse: $result"
+  pass "CI log checkpoint detects truncate-regrow relapse transitions"
 }
 
 test_ci_log_replacement_preserves_fresh_relapse() {
@@ -808,6 +831,29 @@ test_ci_log_replacement_preserves_fresh_relapse() {
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement")
   [ "$result" = "0:1:1" ] || fail "replaced CI log skipped a fresh relapse: $result"
   pass "CI log replacement preserves fresh relapse transitions"
+}
+
+test_identical_ci_log_replacement_is_new_provenance() {
+  local dir state log replacement result
+  dir=$(make_case ci-log-identical-replacement); state="$dir/state"
+  log="$dir/nm/logs/run-identical-replacement/ci.log"
+  replacement="$dir/replacement.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\nchecks failed: unit\nall CI checks passed - still monitoring until merged or closed\n' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    replacement=$4
+    initial=$(fm_pr_ready_ci_generation "$state" identical-replacement run-identical-replacement GNG)
+    cp "$log" "$replacement"
+    mv "$replacement" "$log"
+    recovered=$(fm_pr_ready_ci_generation "$state" identical-replacement run-identical-replacement GNG)
+    unchanged=$(fm_pr_ready_ci_generation "$state" identical-replacement run-identical-replacement GNG)
+    printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement")
+  [ "$result" = "1:2:2" ] || fail "identical replacement provenance hid a fresh relapse: $result"
+  pass "CI log replacement provenance distinguishes identical relapse cycles"
 }
 
 test_initial_ci_snapshot_preserves_post_state_relapse() {
@@ -1017,8 +1063,10 @@ test_signal_arriving_during_sweep_has_incremental_latency
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
-test_ci_log_shrink_rebaselines_without_replaying_relapse
+test_ci_log_shrink_preserves_fresh_relapse
+test_ci_log_truncate_regrow_preserves_fresh_relapse
 test_ci_log_replacement_preserves_fresh_relapse
+test_identical_ci_log_replacement_is_new_provenance
 test_initial_ci_snapshot_preserves_post_state_relapse
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan

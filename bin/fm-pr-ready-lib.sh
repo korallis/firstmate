@@ -116,6 +116,21 @@ fm_pr_ready_file_identity() {  # <path>
   fi
 }
 
+fm_pr_ready_ci_checkpoint() {  # <path> <consumed-bytes>
+  local path=$1 consumed=$2 tail_start tail_size
+  case "$consumed" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$consumed" -gt 0 ] || { printf 'empty'; return; }
+  tail_size=$consumed
+  [ "$tail_size" -le 4096 ] || tail_size=4096
+  tail_start=$((consumed - tail_size + 1))
+  {
+    head -c "$tail_size" "$path" 2>/dev/null
+    if [ "$consumed" -gt 4096 ]; then
+      tail -c "+$tail_start" "$path" 2>/dev/null | head -c "$tail_size"
+    fi
+  } | cksum | awk '{print $1 ":" $2}'
+}
+
 fm_pr_ready_ci_log_events() {
   printf '%s\n' "$1" | awk '
     /CI checks passed|no CI checks reported - still monitoring/ { state = "G" }
@@ -137,7 +152,7 @@ fm_pr_ready_advance_generation() {  # <generation> <before> <events>
 
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   local path tmp run=$3 current=$4 prior_run prior generation log log_size log_id prior_log_id offset last
-  local max overlap appended advanced i unread snapshot complete consumed start parse_snapshot reset_log
+  local max overlap appended advanced i unread snapshot complete consumed start parse_snapshot reset_log checkpoint prior_checkpoint
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
   prior_run=$(fm_pr_ready_meta_value "$path" run)
   prior=$(fm_pr_ready_meta_value "$path" window)
@@ -145,6 +160,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   offset=$(fm_pr_ready_meta_value "$path" offset)
   last=$(fm_pr_ready_meta_value "$path" last)
   prior_log_id=$(fm_pr_ready_meta_value "$path" log_id)
+  prior_checkpoint=$(fm_pr_ready_meta_value "$path" checkpoint)
   case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
   case "$offset" in ''|*[!0-9]*) offset= ;; esac
   if [ "$prior_run" != "$run" ]; then
@@ -153,6 +169,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     offset=
     last=
     prior_log_id=
+    prior_checkpoint=
   fi
   log=$(fm_pr_ready_ci_log_path "$run")
   log_size=$(fm_pr_ready_file_size "$log" || true)
@@ -163,7 +180,15 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     if { [ -n "$prior_log_id" ] && [ -n "$log_id" ] && [ "$prior_log_id" != "$log_id" ]; } \
       || { [ -n "$offset" ] && [ "$log_size" -lt "$offset" ]; }; then
       reset_log=1
+    elif [ -n "$offset" ] && [ -n "$prior_checkpoint" ]; then
+      checkpoint=$(fm_pr_ready_ci_checkpoint "$log" "$offset" || true)
+      if [ -n "$checkpoint" ] && [ "$checkpoint" != "$prior_checkpoint" ]; then
+        reset_log=1
+      fi
+    fi
+    if [ -n "$reset_log" ]; then
       offset=
+      prior_checkpoint=
     fi
     start=
     if [ -z "$offset" ]; then
@@ -191,17 +216,6 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
             cp "$snapshot" "$parse_snapshot"
           fi
           appended=$(fm_pr_ready_ci_log_events "$(cat "$parse_snapshot")")
-          if [ -n "$reset_log" ] && [ -n "$prior" ]; then
-            max=${#prior}
-            [ "${#appended}" -lt "$max" ] && max=${#appended}
-            overlap=0
-            i=$max
-            while [ "$i" -gt 0 ]; do
-              if [ "${prior:${#prior}-i:i}" = "${appended:0:i}" ]; then overlap=$i; break; fi
-              i=$((i - 1))
-            done
-            appended=${appended:overlap}
-          fi
           advanced=$(fm_pr_ready_advance_generation "$generation" "$last" "$appended")
           generation=${advanced%%$'\t'*}
           last=${advanced#*$'\t'}
@@ -209,6 +223,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
         fi
         rm -f "$snapshot" "$complete" "$parse_snapshot"
       fi
+      checkpoint=$(fm_pr_ready_ci_checkpoint "$log" "$offset" || true)
     fi
   elif [ -z "$offset" ] && [ -n "$prior" ]; then
     max=${#prior}
@@ -226,6 +241,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   fi
   [ -n "$last" ] || last=${current:${#current}-1:1}
   [ -n "$log_id" ] || log_id=$prior_log_id
+  [ -n "${checkpoint:-}" ] || checkpoint=$prior_checkpoint
   tmp="$path.tmp.${BASHPID:-$$}"
   {
     printf 'run=%s\n' "$run"
@@ -234,6 +250,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     printf 'offset=%s\n' "$offset"
     printf 'last=%s\n' "$last"
     printf 'log_id=%s\n' "$log_id"
+    printf 'checkpoint=%s\n' "$checkpoint"
   } > "$tmp" && mv -f "$tmp" "$path" || return 1
   printf '%s' "$generation"
 }
