@@ -1119,6 +1119,38 @@ test_initial_ci_snapshot_excludes_concurrent_append() {
   pass "initial CI snapshot excludes concurrent appends beyond its sampled size"
 }
 
+test_initial_and_reset_ci_snapshots_preserve_partial_events() {
+  local dir state log replacement result
+  dir=$(make_case ci-log-initial-reset-partial); state="$dir/state"
+  log="$dir/nm/logs/run-partial/ci.log"
+  replacement="$dir/replacement.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\nchecks fai' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    replacement=$4
+    initial=$(fm_pr_ready_ci_generation "$state" initial-partial run-partial G)
+    printf "led: unit\nall CI checks passed - still monitoring until merged or closed\n" >> "$log"
+    initial_recovered=$(fm_pr_ready_ci_generation "$state" initial-partial run-partial G)
+    initial_unchanged=$(fm_pr_ready_ci_generation "$state" initial-partial run-partial G)
+
+    printf "all CI checks passed - still monitoring until merged or closed\n" > "$log"
+    reset_initial=$(fm_pr_ready_ci_generation "$state" reset-partial run-partial G)
+    printf "all CI checks passed - still monitoring until merged or closed\nchecks fai" > "$replacement"
+    mv "$replacement" "$log"
+    fm_pr_ready_ci_generation "$state" reset-partial run-partial G >/dev/null
+    printf "led: unit\nall CI checks passed - still monitoring until merged or closed\n" >> "$log"
+    reset_recovered=$(fm_pr_ready_ci_generation "$state" reset-partial run-partial G)
+    reset_unchanged=$(fm_pr_ready_ci_generation "$state" reset-partial run-partial G)
+    printf "%s:%s:%s:%s:%s:%s" "$initial" "$initial_recovered" "$initial_unchanged" \
+      "$reset_initial" "$reset_recovered" "$reset_unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement")
+  [ "$result" = "0:1:1:0:1:1" ] || fail "initial/reset snapshots lost a partial CI event: $result"
+  pass "initial and reset CI snapshots preserve partial event lines"
+}
+
 test_relapse_rearm_and_head_change_supersede_green() {
   local dir state fakebin first again marker
   dir=$(make_case relapse-rearm); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1330,6 +1362,7 @@ test_ci_log_replacement_preserves_fresh_relapse
 test_identical_ci_log_replacement_remains_deduplicated
 test_initial_ci_snapshot_preserves_post_state_relapse
 test_initial_ci_snapshot_excludes_concurrent_append
+test_initial_and_reset_ci_snapshots_preserve_partial_events
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
 test_changing_pane_failure_is_observed_by_task_scan

@@ -193,10 +193,16 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
       initial_bytes=$log_size
       [ "$initial_bytes" -gt 65536 ] && initial_bytes=65536
       initial_start=$((log_size - initial_bytes))
-      initial=$(tail -c "+$((initial_start + 1))" "$log" 2>/dev/null | head -c "$initial_bytes" || true)
+      snapshot="$path.snapshot.${BASHPID:-$$}"
+      tail -c "+$((initial_start + 1))" "$log" 2>/dev/null | head -c "$initial_bytes" > "$snapshot" || true
+      initial=$(cat "$snapshot")
       events=$(fm_pr_ready_ci_log_events "$initial")
       if [ -n "$events" ]; then last=${events:${#events}-1:1}; else last=${current:${#current}-1:1}; fi
       carry=
+      if [ "$(tail -c 1 "$snapshot" 2>/dev/null | wc -l | tr -d ' ')" != 1 ]; then
+        carry=$(tail -c 256 "$snapshot" 2>/dev/null | tr -d '\r\n')
+      fi
+      rm -f "$snapshot"
       offset=$log_size
     elif [ "$log_size" -gt "$offset" ]; then
       unread=$((log_size - offset))
