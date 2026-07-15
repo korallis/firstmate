@@ -180,7 +180,12 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
       [ -z "$current_checkpoint" ] || [ "$current_checkpoint" = "$checkpoint" ] || reset_log=1
     fi
     if [ -z "$offset" ] || [ -n "$reset_log" ]; then
-      if [ -n "$offset" ] && [ -n "$reset_log" ]; then generation=$((generation + 1)); fi
+      if [ -n "$offset" ] && [ -n "$reset_log" ] && [ -n "$prior" ] \
+        && [ "$current" != "$prior" ]; then
+        advanced=$(fm_pr_ready_advance_generation "$generation" "${prior:${#prior}-1:1}" "$current")
+        generation=${advanced%%$'\t'*}
+        last=${advanced#*$'\t'}
+      fi
       initial=$(tail -c 65536 "$log" 2>/dev/null || true)
       events=$(fm_pr_ready_ci_log_events "$initial")
       if [ -n "$events" ]; then last=${events:${#events}-1:1}; else last=${current:${#current}-1:1}; fi

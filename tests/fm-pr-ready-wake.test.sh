@@ -865,6 +865,26 @@ test_ci_log_middle_rewrite_preserves_fresh_relapse() {
   pass "CI log middle rewrite supersedes prior readiness exactly once"
 }
 
+test_ci_log_middle_rewrite_without_new_transition_deduplicates() {
+  local dir state log result
+  dir=$(make_case ci-log-benign-middle-rewrite); state="$dir/state"
+  log="$dir/nm/logs/run-benign-middle-rewrite/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\nchecks failed: unit\nold diagnostic\nall CI checks passed - still monitoring until merged or closed\n' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    initial=$(fm_pr_ready_ci_generation "$state" benign-middle-rewrite run-benign-middle-rewrite GNG)
+    perl -0pi -e "s/old diagnostic/new diagnostic/" "$log"
+    refined=$(fm_pr_ready_ci_generation "$state" benign-middle-rewrite run-benign-middle-rewrite GNG)
+    unchanged=$(fm_pr_ready_ci_generation "$state" benign-middle-rewrite run-benign-middle-rewrite GNG)
+    printf "%s:%s:%s" "$initial" "$refined" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
+  [ "$result" = "0:0:0" ] || fail "benign middle rewrite changed the relapse generation: $result"
+  pass "CI log middle rewrites without new transitions remain deduplicated"
+}
+
 test_ci_log_reset_boundary_preserves_first_event() {
   local dir state log replacement window result
   dir=$(make_case ci-log-reset-boundary); state="$dir/state"
@@ -919,7 +939,7 @@ test_ci_log_replacement_preserves_fresh_relapse() {
   pass "CI log replacement supersedes prior readiness exactly once"
 }
 
-test_identical_ci_log_replacement_is_new_provenance() {
+test_identical_ci_log_replacement_remains_deduplicated() {
   local dir state log replacement result
   dir=$(make_case ci-log-identical-replacement); state="$dir/state"
   log="$dir/nm/logs/run-identical-replacement/ci.log"
@@ -938,8 +958,8 @@ test_identical_ci_log_replacement_is_new_provenance() {
     unchanged=$(fm_pr_ready_ci_generation "$state" identical-replacement run-identical-replacement GNG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement")
-  [ "$result" = "0:1:1" ] || fail "identical replacement did not advance the provenance generation exactly once: $result"
-  pass "identical CI log replacement supersedes prior provenance exactly once"
+  [ "$result" = "0:0:0" ] || fail "identical replacement changed the relapse generation: $result"
+  pass "identical CI log replacement remains deduplicated"
 }
 
 test_initial_ci_snapshot_preserves_post_state_relapse() {
@@ -1153,9 +1173,10 @@ test_ci_log_large_append_preserves_relapse
 test_ci_log_shrink_preserves_fresh_relapse
 test_ci_log_truncate_regrow_preserves_fresh_relapse
 test_ci_log_middle_rewrite_preserves_fresh_relapse
+test_ci_log_middle_rewrite_without_new_transition_deduplicates
 test_ci_log_reset_boundary_preserves_first_event
 test_ci_log_replacement_preserves_fresh_relapse
-test_identical_ci_log_replacement_is_new_provenance
+test_identical_ci_log_replacement_remains_deduplicated
 test_initial_ci_snapshot_preserves_post_state_relapse
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
