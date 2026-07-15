@@ -13,14 +13,12 @@ TMP_ROOT=$(fm_test_tmproot fm-pr-ready-wake-tests)
 READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|baseline'
 ALT_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7|baseline · status-log event superseded by authoritative run'
 RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|events-GNG'
-REPEATED_RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|events-GNGNG'
 ROTATED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|events-G'
 STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR · run-identity: run-7'
 COARSE_STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR'
 UNKNOWN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7'
 REARMED_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-8'
 FUTURE_RUN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: 7ZZZZZZZZZ'
-INTERVENING_RUN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: 01ARZ3NDEK'
 WORKING_LINE='state: working · source: run-step · ci running'
 FAILED_LINE='state: failed · source: run-step · run failed'
 PAUSED_GREEN_LINE='state: paused · source: status-log · awaiting upstream owner · checks green: PR ready for review (still monitoring for merge/close)'
@@ -394,7 +392,7 @@ test_coarse_status_refines_to_authoritative_baseline() {
 }
 
 test_identity_refinement_relation_matrix() {
-  local row prior current expected actual
+  local prior current expected actual
   while IFS=$'\t' read -r prior current expected; do
     [ -n "$prior" ] || continue
     actual=$(fm_pr_ready_identity_relation "$prior" "$current")
