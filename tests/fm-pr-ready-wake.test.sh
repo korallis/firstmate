@@ -806,6 +806,29 @@ test_ci_log_snapshot_preserves_split_event_lines() {
   pass "CI generation defers incomplete event lines until a later snapshot completes them"
 }
 
+test_ci_log_long_partial_line_preserves_failure() {
+  local dir state log result
+  dir=$(make_case ci-log-long-partial-line); state="$dir/state"
+  log="$dir/nm/logs/run-long-partial/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    initial=$(fm_pr_ready_ci_generation "$state" long-partial run-long-partial G)
+    printf "checks failed: " >> "$log"
+    head -c 1024 /dev/zero | tr "\0" x >> "$log"
+    partial=$(fm_pr_ready_ci_generation "$state" long-partial run-long-partial G)
+    printf "\nall CI checks passed - still monitoring until merged or closed\n" >> "$log"
+    recovered=$(fm_pr_ready_ci_generation "$state" long-partial run-long-partial G)
+    unchanged=$(fm_pr_ready_ci_generation "$state" long-partial run-long-partial G)
+    printf "%s:%s:%s:%s" "$initial" "$partial" "$recovered" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
+  [ "$result" = "0:0:1:1" ] || fail "long partial CI event line lost its failure marker: $result"
+  pass "CI generation preserves complete long partial event lines"
+}
+
 test_ci_log_large_append_preserves_relapse() {
   local dir state log result
   dir=$(make_case ci-log-large-append); state="$dir/state"
@@ -902,6 +925,34 @@ test_ci_log_middle_rewrite_preserves_fresh_relapse() {
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$block")
   [ "$result" = "0:1:1" ] || fail "middle CI log rewrite did not advance the relapse generation exactly once: $result"
   pass "CI log middle rewrite supersedes prior readiness exactly once"
+}
+
+test_ci_log_late_rewrite_preserves_fresh_relapse() {
+  local dir state log block result
+  dir=$(make_case ci-log-late-rewrite); state="$dir/state"
+  log="$dir/nm/logs/run-late-rewrite/ci.log"
+  block="$dir/rewrite.block"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  head -c 70000 /dev/zero | tr '\0' a >> "$log"
+  printf '\n' >> "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    block=$4
+    rewrite_at=66000
+    initial=$(fm_pr_ready_ci_generation "$state" late-rewrite run-late-rewrite G)
+    printf "checks failed: unit\nall CI checks passed - still monitoring until merged or closed\n" > "$block"
+    block_size=$(fm_pr_ready_file_size "$block")
+    head -c $((256 - block_size)) /dev/zero | tr "\0" y >> "$block"
+    dd if="$block" of="$log" bs=1 seek="$rewrite_at" conv=notrunc 2>/dev/null
+    recovered=$(fm_pr_ready_ci_generation "$state" late-rewrite run-late-rewrite GNG)
+    unchanged=$(fm_pr_ready_ci_generation "$state" late-rewrite run-late-rewrite GNG)
+    printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$block")
+  [ "$result" = "0:1:1" ] || fail "late CI log rewrite did not advance the relapse generation exactly once: $result"
+  pass "CI log rewrites beyond the former prefix checkpoint remain visible"
 }
 
 test_ci_log_middle_rewrite_without_new_transition_deduplicates() {
@@ -1209,10 +1260,12 @@ test_sweep_cursor_advances_past_recent_task
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
+test_ci_log_long_partial_line_preserves_failure
 test_ci_log_large_append_preserves_relapse
 test_ci_log_shrink_preserves_fresh_relapse
 test_ci_log_truncate_regrow_preserves_fresh_relapse
 test_ci_log_middle_rewrite_preserves_fresh_relapse
+test_ci_log_late_rewrite_preserves_fresh_relapse
 test_ci_log_middle_rewrite_without_new_transition_deduplicates
 test_ci_log_reset_boundary_preserves_first_event
 test_ci_log_replacement_preserves_fresh_relapse

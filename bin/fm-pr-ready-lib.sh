@@ -204,7 +204,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
         cp "$combined" "$complete"
       else
         sed '$d' "$combined" > "$complete"
-        carry=$(tail -n 1 "$combined" 2>/dev/null | tail -c 256 | tr -d '\r')
+        carry=$(tail -n 1 "$combined" 2>/dev/null | tr -d '\r')
       fi
       consumed=$unread
       if [ "$consumed" -gt 0 ]; then
@@ -234,7 +234,6 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   [ -n "$log_id" ] || log_id=$prior_log_id
   if [ -n "$offset" ]; then
     new_checkpoint_len=$offset
-    [ "$new_checkpoint_len" -le 65536 ] || new_checkpoint_len=65536
     new_checkpoint=$(fm_pr_ready_file_checkpoint "$log" "$new_checkpoint_len" || true)
     if [ -n "$new_checkpoint" ]; then
       checkpoint_len=$new_checkpoint_len
