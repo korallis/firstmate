@@ -820,13 +820,37 @@ test_ci_log_long_partial_line_preserves_failure() {
     printf "checks failed: " >> "$log"
     head -c 1024 /dev/zero | tr "\0" x >> "$log"
     partial=$(fm_pr_ready_ci_generation "$state" long-partial run-long-partial G)
+    carry=$(fm_pr_ready_meta_value "$(fm_pr_ready_ci_sequence_path "$state" long-partial)" carry)
     printf "\nall CI checks passed - still monitoring until merged or closed\n" >> "$log"
     recovered=$(fm_pr_ready_ci_generation "$state" long-partial run-long-partial G)
     unchanged=$(fm_pr_ready_ci_generation "$state" long-partial run-long-partial G)
-    printf "%s:%s:%s:%s" "$initial" "$partial" "$recovered" "$unchanged"
+    printf "%s:%s:%s:%s:%s" "$initial" "$partial" "$recovered" "$unchanged" "${#carry}"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
-  [ "$result" = "0:0:1:1" ] || fail "long partial CI event line lost its failure marker: $result"
-  pass "CI generation preserves complete long partial event lines"
+  [ "$result" = "0:0:1:1:256" ] || fail "long partial CI event line was lost or retained without a bound: $result"
+  pass "CI generation bounds partial lines while preserving failure markers"
+}
+
+test_ci_log_checkpoint_is_bounded() {
+  local dir state log result
+  dir=$(make_case ci-log-bounded-checkpoint); state="$dir/state"
+  log="$dir/nm/logs/run-bounded-checkpoint/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  head -c 200000 /dev/zero | tr '\0' x >> "$log"
+  printf '\n' >> "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    fm_pr_ready_ci_generation "$state" bounded-checkpoint run-bounded-checkpoint G >/dev/null
+    sequence=$(fm_pr_ready_ci_sequence_path "$state" bounded-checkpoint)
+    len=$(fm_pr_ready_meta_value "$sequence" checkpoint_len)
+    start=$(fm_pr_ready_meta_value "$sequence" checkpoint_start)
+    size=$(fm_pr_ready_file_size "$log")
+    [ "$len" = 65536 ] && [ $((start + len)) -eq "$size" ] && printf bounded
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
+  [ "$result" = "bounded" ] || fail "CI checkpoint was not bounded to the consumed tail: $result"
+  pass "CI log rewrite checkpoints remain bounded"
 }
 
 test_ci_log_large_append_preserves_relapse() {
@@ -1261,6 +1285,7 @@ test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
 test_ci_log_long_partial_line_preserves_failure
+test_ci_log_checkpoint_is_bounded
 test_ci_log_large_append_preserves_relapse
 test_ci_log_shrink_preserves_fresh_relapse
 test_ci_log_truncate_regrow_preserves_fresh_relapse
