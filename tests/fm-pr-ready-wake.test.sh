@@ -1384,18 +1384,22 @@ test_pr_ready_state_cleanup() {
   dir=$(make_case state-cleanup); state="$dir/state"
   touch "$state/.pr-ready-cleanup" "$state/.last-pr-ready-cleanup" \
     "$state/.pr-ready-superseded-cleanup" "$state/.pr-ready-status-surfaced-cleanup" \
-    "$state/.pr-ready-observed-cleanup" "$state/.pr-ready-ci-sequence-cleanup"
-  fm_pr_ready_cleanup "$state" cleanup
+    "$state/.pr-ready-observed-cleanup" "$state/.pr-ready-ci-sequence-cleanup" \
+    "$state/.paused-pr-ready-rechecked-task-cleanup" \
+    "$state/.paused-pr-ready-rechecked-test_fm-cleanup"
+  fm_pr_ready_cleanup "$state" cleanup "test:fm-cleanup"
   [ ! -e "$state/.pr-ready-cleanup" ] || fail "readiness marker survived cleanup"
   [ ! -e "$state/.last-pr-ready-cleanup" ] || fail "readiness cadence marker survived cleanup"
   [ ! -e "$state/.pr-ready-superseded-cleanup" ] || fail "readiness supersession survived cleanup"
   [ ! -e "$state/.pr-ready-status-surfaced-cleanup" ] || fail "status readiness fallback survived cleanup"
   [ ! -e "$state/.pr-ready-observed-cleanup" ] || fail "readiness observation time survived cleanup"
   [ ! -e "$state/.pr-ready-ci-sequence-cleanup" ] || fail "CI occurrence sequence survived cleanup"
-  grep -F "fm_pr_ready_cleanup \"\$STATE\" \"\$ID\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
-    || fail "normal teardown does not invoke PR-ready cleanup"
-  grep -F "fm_pr_ready_cleanup \"\$sub_state\" \"\$child_id\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
-    || fail "secondmate-child teardown does not invoke PR-ready cleanup"
+  [ ! -e "$state/.paused-pr-ready-rechecked-task-cleanup" ] || fail "task-fallback pause cadence survived cleanup"
+  [ ! -e "$state/.paused-pr-ready-rechecked-test_fm-cleanup" ] || fail "window pause cadence survived cleanup"
+  grep -F "fm_pr_ready_cleanup \"\$STATE\" \"\$ID\" \"\$T\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
+    || fail "normal teardown does not invoke PR-ready cleanup with its window"
+  grep -F "fm_pr_ready_cleanup \"\$sub_state\" \"\$child_id\" \"\$child_t\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
+    || fail "secondmate-child teardown does not invoke PR-ready cleanup with its window"
   pass "normal and secondmate-child teardown remove persistent PR-ready state"
 }
 
@@ -1430,6 +1434,23 @@ test_keyed_pause_precedence_and_stale_absorption() {
     || { reap "$pid"; fail "keyed pause did not start its bounded authoritative recheck cadence"; }
   reap "$pid"
 
+  printf 'working: upstream landed, resuming\n' > "$state/paused.status"
+  printf '%s' "$(seen_sig "$state/paused.status")" > "$state/.seen-paused_status"
+  rm -f "$state/.hash-$key" "$state/.count-$key" "$state/.stale-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_SCAN_INTERVAL=999999 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  sleep 1.5
+  kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; fail "resumed task produced an actionable wake"; }
+  [ ! -e "$state/.paused-pr-ready-rechecked-$key" ] \
+    || { reap "$pid"; fail "resumed task retained the prior pause readiness cadence"; }
+  reap "$pid"
+
+  printf 'paused [key=upstream-owner]: awaiting the upstream owner\n' > "$state/paused.status"
+  printf '%s' "$(seen_sig "$state/paused.status")" > "$state/.seen-paused_status"
   rm -f "$state/.last-pr-ready-paused"
   : > "$out"
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \

@@ -66,13 +66,22 @@ fm_pr_ready_ci_sequence_path() {  # <state> <task-id>
   printf '%s/.pr-ready-ci-sequence-%s' "$1" "$key"
 }
 
-fm_pr_ready_cleanup() {  # <state> <task-id>
-  rm -f "$(fm_pr_ready_marker_path "$1" "$2")" \
-    "$(fm_pr_ready_scan_path "$1" "$2")" \
-    "$(fm_pr_ready_superseded_path "$1" "$2")" \
-    "$(fm_pr_ready_status_surfaced_path "$1" "$2")" \
-    "$(fm_pr_ready_observed_path "$1" "$2")" \
-    "$(fm_pr_ready_ci_sequence_path "$1" "$2")"
+fm_pr_ready_pause_scan_path() {  # <state> <window-or-task-fallback>
+  local key
+  key=$(printf '%s' "$2" | tr ':/.' '___')
+  printf '%s/.paused-pr-ready-rechecked-%s' "$1" "$key"
+}
+
+fm_pr_ready_cleanup() {  # <state> <task-id> [<window>]
+  local state=$1 task=$2 win=${3:-}
+  rm -f "$(fm_pr_ready_marker_path "$state" "$task")" \
+    "$(fm_pr_ready_scan_path "$state" "$task")" \
+    "$(fm_pr_ready_superseded_path "$state" "$task")" \
+    "$(fm_pr_ready_status_surfaced_path "$state" "$task")" \
+    "$(fm_pr_ready_observed_path "$state" "$task")" \
+    "$(fm_pr_ready_ci_sequence_path "$state" "$task")" \
+    "$(fm_pr_ready_pause_scan_path "$state" "task-$task")"
+  [ -z "$win" ] || rm -f "$(fm_pr_ready_pause_scan_path "$state" "$win")"
 }
 
 # Print ready, supersede, or indeterminate for one canonical crew-state line.

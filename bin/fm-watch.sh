@@ -274,14 +274,13 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # even while the pane is busy or changing. The cadence and readiness marker
 # persist across watcher generations.
 pr_ready_recheck() {  # <task-id> [<window>]
-  local task=$1 win=${2:-} scan_file record ready_id ready_identity ready_reason key pause_recheck_file paused_status
+  local task=$1 win=${2:-} scan_file record ready_id ready_identity ready_reason pause_recheck_file paused_status
   scan_file=$(fm_pr_ready_scan_path "$STATE" "$task")
   [ "$(age_of "$scan_file")" -ge "$PR_READY_SCAN_INTERVAL" ] || return 0
   paused_status=
   if status_is_paused "$(last_status_line "$STATE/$task.status")"; then
     paused_status=1
-    key=$(printf '%s' "${win:-task-$task}" | tr ':/.' '___')
-    pause_recheck_file="$STATE/.paused-pr-ready-rechecked-$key"
+    pause_recheck_file=$(fm_pr_ready_pause_scan_path "$STATE" "${win:-task-$task}")
     if [ ! -e "$pause_recheck_file" ]; then
       fm_pr_ready_record_supersession "$STATE" "$task" || exit 1
       touch "$pause_recheck_file" "$scan_file"
@@ -840,8 +839,14 @@ EOF
     key=${key//\//_}
     key=${key//./_}
     last=$(last_status_line "$STATE/$task.status")
-    if ! status_is_paused "$last" && [ -e "$STATE/.paused-$key" ]; then
-      clear_pause_tracking "$w"
+    if ! status_is_paused "$last"; then
+      if [ -e "$STATE/.paused-$key" ]; then
+        clear_pause_tracking "$w"
+      elif [ -e "$STATE/.paused-rechecked-$key" ] \
+        || [ -e "$STATE/.paused-pr-ready-rechecked-$key" ] \
+        || [ -e "$STATE/.paused-resurfaced-$key" ]; then
+        clear_pause_state "$w"
+      fi
     fi
     if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
       continue
