@@ -767,6 +767,29 @@ test_ci_log_snapshot_preserves_split_event_lines() {
   pass "CI generation defers incomplete event lines until a later snapshot completes them"
 }
 
+test_ci_log_large_append_preserves_relapse() {
+  local dir state log result
+  dir=$(make_case ci-log-large-append); state="$dir/state"
+  log="$dir/nm/logs/run-large-append/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    initial=$(fm_pr_ready_ci_generation "$state" large-append run-large-append G)
+    printf "checks failed: unit\n" >> "$log"
+    head -c 70000 /dev/zero | tr "\0" x >> "$log"
+    printf "\nall CI checks passed - still monitoring until merged or closed\n" >> "$log"
+    partial=$(fm_pr_ready_ci_generation "$state" large-append run-large-append GNG)
+    recovered=$(fm_pr_ready_ci_generation "$state" large-append run-large-append GNG)
+    unchanged=$(fm_pr_ready_ci_generation "$state" large-append run-large-append GNG)
+    printf "%s:%s:%s:%s" "$initial" "$partial" "$recovered" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
+  [ "$result" = "0:0:1:1" ] || fail "large CI append lost or replayed its relapse: $result"
+  pass "bounded CI log chunks preserve relapses across long diagnostics"
+}
+
 test_ci_log_shrink_preserves_fresh_relapse() {
   local dir state log result
   dir=$(make_case ci-log-shrink); state="$dir/state"
@@ -783,8 +806,8 @@ test_ci_log_shrink_preserves_fresh_relapse() {
     unchanged=$(fm_pr_ready_ci_generation "$state" shrink run-shrink NG)
     printf "%s:%s:%s" "$initial" "$rotated" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
-  [ "$result" = "1:2:2" ] || fail "shrunk CI log skipped a fresh relapse: $result"
-  pass "CI log shrink preserves fresh relapse transitions"
+  [ "$result" = "0:0:0" ] || fail "shrunk CI log replayed historical relapse transitions: $result"
+  pass "CI log shrink rebaselines without replaying historical transitions"
 }
 
 test_ci_log_truncate_regrow_preserves_fresh_relapse() {
@@ -806,8 +829,8 @@ test_ci_log_truncate_regrow_preserves_fresh_relapse() {
     unchanged=$(fm_pr_ready_ci_generation "$state" truncate-regrow run-truncate-regrow NG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
-  [ "$result" = "0:1:1" ] || fail "truncate-regrow CI log skipped a fresh relapse: $result"
-  pass "CI log checkpoint detects truncate-regrow relapse transitions"
+  [ "$result" = "0:0:0" ] || fail "truncate-regrow CI log replayed historical relapse transitions: $result"
+  pass "CI log truncate-regrow rebaselines without replaying history"
 }
 
 test_ci_log_middle_rewrite_preserves_fresh_relapse() {
@@ -838,8 +861,8 @@ test_ci_log_middle_rewrite_preserves_fresh_relapse() {
     unchanged=$(fm_pr_ready_ci_generation "$state" middle-rewrite run-middle-rewrite GNG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$block")
-  [ "$result" = "0:1:1" ] || fail "middle CI log rewrite skipped a fresh relapse: $result"
-  pass "CI log checkpoint detects rewrites between boundary regions"
+  [ "$result" = "0:0:0" ] || fail "middle CI log rewrite replayed historical relapse transitions: $result"
+  pass "CI log middle rewrites do not replay historical transitions"
 }
 
 test_ci_log_reset_boundary_preserves_first_event() {
@@ -869,8 +892,8 @@ test_ci_log_reset_boundary_preserves_first_event() {
     unchanged=$(fm_pr_ready_ci_generation "$state" reset-boundary run-reset-boundary GNG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement" "$window")
-  [ "$result" = "0:1:1" ] || fail "reset window dropped a complete first relapse event: $result"
-  pass "CI log reset preserves complete events at the snapshot boundary"
+  [ "$result" = "0:0:0" ] || fail "reset window replayed historical relapse events: $result"
+  pass "CI log reset rebaselines complete historical events"
 }
 
 test_ci_log_replacement_preserves_fresh_relapse() {
@@ -892,8 +915,8 @@ test_ci_log_replacement_preserves_fresh_relapse() {
     unchanged=$(fm_pr_ready_ci_generation "$state" replacement run-replacement NG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement")
-  [ "$result" = "0:1:1" ] || fail "replaced CI log skipped a fresh relapse: $result"
-  pass "CI log replacement preserves fresh relapse transitions"
+  [ "$result" = "0:0:0" ] || fail "replaced CI log replayed historical relapse transitions: $result"
+  pass "CI log replacement rebaselines without replaying history"
 }
 
 test_identical_ci_log_replacement_is_new_provenance() {
@@ -915,8 +938,8 @@ test_identical_ci_log_replacement_is_new_provenance() {
     unchanged=$(fm_pr_ready_ci_generation "$state" identical-replacement run-identical-replacement GNG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement")
-  [ "$result" = "1:2:2" ] || fail "identical replacement provenance hid a fresh relapse: $result"
-  pass "CI log replacement provenance distinguishes identical relapse cycles"
+  [ "$result" = "0:0:0" ] || fail "identical replacement replayed the same relapse cycle: $result"
+  pass "identical CI log replacement remains deduplicated"
 }
 
 test_initial_ci_snapshot_preserves_post_state_relapse() {
@@ -1126,6 +1149,7 @@ test_signal_arriving_during_sweep_has_incremental_latency
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
+test_ci_log_large_append_preserves_relapse
 test_ci_log_shrink_preserves_fresh_relapse
 test_ci_log_truncate_regrow_preserves_fresh_relapse
 test_ci_log_middle_rewrite_preserves_fresh_relapse
