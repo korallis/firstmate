@@ -144,6 +144,8 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   local path tmp run=$3 current=$4 prior_run prior generation log log_size log_id prior_log_id offset last carry
   local checkpoint_start checkpoint_len checkpoint current_checkpoint verified_checkpoint new_checkpoint_start new_checkpoint_len new_checkpoint
   local max overlap appended advanced i unread snapshot combined consumed reset_log initial events initial_start initial_bytes
+  local saved_prior saved_generation saved_offset saved_last saved_carry saved_log_id
+  local saved_checkpoint_start saved_checkpoint_len saved_checkpoint
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
   prior_run=$(fm_pr_ready_meta_value "$path" run)
   prior=$(fm_pr_ready_meta_value "$path" window)
@@ -170,6 +172,15 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     checkpoint_len=
     checkpoint=
   fi
+  saved_prior=$prior
+  saved_generation=$generation
+  saved_offset=$offset
+  saved_last=$last
+  saved_carry=$carry
+  saved_log_id=$prior_log_id
+  saved_checkpoint_start=$checkpoint_start
+  saved_checkpoint_len=$checkpoint_len
+  saved_checkpoint=$checkpoint
   log=$(fm_pr_ready_ci_log_path "$run")
   log_size=$(fm_pr_ready_file_size "$log" || true)
   log_id=$(fm_pr_ready_file_identity "$log" || true)
@@ -250,7 +261,17 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     if [ -n "$checkpoint" ] && [ -n "$checkpoint_start" ] && [ -n "$checkpoint_len" ]; then
       verified_checkpoint=$(fm_pr_ready_file_checkpoint "$log" "$checkpoint_start" "$checkpoint_len" || true)
     fi
-    if [ -n "$new_checkpoint" ] && { [ -n "$reset_log" ] || [ -z "$checkpoint" ] || [ "$verified_checkpoint" = "$checkpoint" ]; }; then
+    if [ -z "$reset_log" ] && [ -n "$checkpoint" ] && [ "$verified_checkpoint" != "$checkpoint" ]; then
+      prior=$saved_prior
+      generation=$saved_generation
+      offset=$saved_offset
+      last=$saved_last
+      carry=$saved_carry
+      log_id=$saved_log_id
+      checkpoint_start=$saved_checkpoint_start
+      checkpoint_len=$saved_checkpoint_len
+      checkpoint=$saved_checkpoint
+    elif [ -n "$new_checkpoint" ]; then
       checkpoint_start=$new_checkpoint_start
       checkpoint_len=$new_checkpoint_len
       checkpoint=$new_checkpoint

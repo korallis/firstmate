@@ -805,6 +805,48 @@ test_concurrent_ci_rewrite_is_not_persisted_as_baseline() {
   pass "concurrent CI rewrites remain visible to the next scan"
 }
 
+test_checkpoint_race_discards_tentative_relapse_state() {
+  local dir state log sequence old old_size result
+  dir=$(make_case checkpoint-race-rollback); state="$dir/state"
+  log="$dir/nm/logs/run-checkpoint-race/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'CI checks passed\n' > "$log"
+  old_size=$(wc -c < "$log" | tr -d ' ')
+  sequence=$(fm_pr_ready_ci_sequence_path "$state" checkpoint-race)
+  old=$(fm_pr_ready_file_checkpoint "$log" 0 "$old_size")
+  {
+    printf 'run=run-checkpoint-race\nwindow=G\ngeneration=0\n'
+    printf 'offset=%s\nlast=G\ncarry=\n' "$old_size"
+    printf 'log_id=%s\ncheckpoint_start=0\ncheckpoint_len=%s\ncheckpoint=%s\n' \
+      "$(fm_pr_ready_file_identity "$log")" "$old_size" "$old"
+  } > "$sequence"
+  printf 'checks failed: unit\nCI checks passed\n' >> "$log"
+  result=$(NM_HOME="$dir/nm" FM_CHECKPOINT_CALLS="$dir/checkpoint-calls" FM_OLD_CHECKPOINT="$old" bash -c '
+    . "$1"
+    fm_pr_ready_file_checkpoint() {
+      local n
+      n=$(cat "$FM_CHECKPOINT_CALLS" 2>/dev/null || echo 0)
+      n=$((n + 1))
+      printf "%s\n" "$n" > "$FM_CHECKPOINT_CALLS"
+      case "$n" in
+        1) printf "%s" "$FM_OLD_CHECKPOINT" ;;
+        2) printf "new:42" ;;
+        3|4) printf "rewritten:42" ;;
+        *) printf "stable:42" ;;
+      esac
+    }
+    first=$(fm_pr_ready_ci_generation "$2" checkpoint-race run-checkpoint-race G)
+    saved_generation=$(fm_pr_ready_meta_value "$(fm_pr_ready_ci_sequence_path "$2" checkpoint-race)" generation)
+    saved_offset=$(fm_pr_ready_meta_value "$(fm_pr_ready_ci_sequence_path "$2" checkpoint-race)" offset)
+    second=$(fm_pr_ready_ci_generation "$2" checkpoint-race run-checkpoint-race GNG)
+    third=$(fm_pr_ready_ci_generation "$2" checkpoint-race run-checkpoint-race GNG)
+    printf "%s:%s:%s:%s:%s" "$first" "$saved_generation" "$saved_offset" "$second" "$third"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state")
+  [ "$result" = "0:0:$old_size:1:1" ] \
+    || fail "checkpoint race persisted or replayed tentative relapse state: $result"
+  pass "checkpoint races discard tentative relapse state before coherent reprocessing"
+}
+
 test_ci_log_snapshot_excludes_concurrent_appends() {
   local dir state log result
   dir=$(make_case ci-log-snapshot); state="$dir/state"
@@ -1415,6 +1457,7 @@ test_signal_arriving_during_sweep_has_incremental_latency
 test_sweep_cursor_advances_past_recent_task
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_concurrent_ci_rewrite_is_not_persisted_as_baseline
+test_checkpoint_race_discards_tentative_relapse_state
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
 test_ci_log_long_partial_line_preserves_failure
