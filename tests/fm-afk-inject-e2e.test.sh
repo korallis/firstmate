@@ -249,6 +249,27 @@ wait_for_pane_input_pending() {
   return 1
 }
 
+injection_marker_count() {
+  awk -F '\t' '{ hex=$1; count += gsub(/e281a3/, "", hex) } END { print count + 0 }' "$LOG_FILE"
+}
+
+wait_for_single_injection() {
+  local i=0 marker_count stable=0
+  while [ "$i" -lt 75 ]; do
+    marker_count=$(injection_marker_count)
+    [ "$marker_count" -gt 1 ] && return 1
+    if [ "$marker_count" -eq 1 ] && [ ! -s "$STATE_DIR/.subsuper-escalations" ]; then
+      stable=$((stable + 1))
+      [ "$stable" -ge 10 ] && return 0
+    else
+      stable=0
+    fi
+    sleep 0.2
+    i=$((i + 1))
+  done
+  return 1
+}
+
 selfcheck_pane_input_pending
 
 # --- Scenario A: human-partial-input ----------------------------------------
@@ -381,7 +402,8 @@ test_scenario_c() {
   start_daemon
 
   echo "done: PR https://example.test/pr/300" > "$STATE_DIR/fake-c1.status"
-  sleep 6
+  wait_for_single_injection \
+    || fail "Scenario C: expected exactly 1 completed U+2063 injection, got $(injection_marker_count)"
 
   # Exactly one terminal-safe marker in the submitted log (no duplicate, no loss).
   local marker_count
