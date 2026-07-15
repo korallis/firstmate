@@ -640,6 +640,24 @@ test_signal_cannot_starve_pr_ready_sweep() {
   pass "actionable signals cannot starve bounded PR-ready scans"
 }
 
+test_missing_backend_target_still_scans_pr_ready_task() {
+  local dir state fakebin out pid
+  dir=$(make_case missing-backend-target); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" targetless off
+  grep -v '^window=' "$state/targetless.meta" > "$state/targetless.meta.tmp"
+  mv "$state/targetless.meta.tmp" "$state/targetless.meta"
+  out="$dir/watch.out"
+  FM_FAKE_CREW_STATE="$READY_LINE" PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "task without backend target was not scanned"; }
+  grep -F "check: authoritative PR-ready transition for targetless" "$out" >/dev/null \
+    || fail "task without backend target did not emit PR-ready wake"
+  pass "metadata tasks remain eligible without a backend target"
+}
+
 test_pending_signal_bounds_pr_ready_sweep_work() {
   local dir state fakebin out pid started elapsed id
   dir=$(make_case signal-sweep-bound); state="$dir/state"; fakebin="$dir/fakebin"
@@ -752,6 +770,39 @@ test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation() {
   repeated=$(NM_HOME="$dir/nm" next_ready "$state" "$fakebin" between-scan-relapse "$RECOVERED_READY_LINE")
   [ -n "$repeated" ] || fail "identical repeated relapse window reused the prior identity"
   pass "persistent log offsets distinguish identical relapse windows after bounded-tail rotation"
+}
+
+test_concurrent_ci_rewrite_is_not_persisted_as_baseline() {
+  local dir state log sequence old result
+  dir=$(make_case concurrent-ci-rewrite); state="$dir/state"
+  log="$dir/nm/logs/run-rewrite-race/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'CI checks passed\n' > "$log"
+  sequence=$(fm_pr_ready_ci_sequence_path "$state" rewrite-race)
+  old=$(fm_pr_ready_file_checkpoint "$log" 0 "$(wc -c < "$log" | tr -d ' ')")
+  {
+    printf 'run=run-rewrite-race\nwindow=G\ngeneration=0\n'
+    printf 'offset=%s\nlast=G\ncarry=\n' "$(wc -c < "$log" | tr -d ' ')"
+    printf 'log_id=%s\ncheckpoint_start=0\ncheckpoint_len=%s\ncheckpoint=%s\n' \
+      "$(fm_pr_ready_file_identity "$log")" "$(wc -c < "$log" | tr -d ' ')" "$old"
+  } > "$sequence"
+  result=$(NM_HOME="$dir/nm" FM_CHECKPOINT_CALLS="$dir/checkpoint-calls" FM_OLD_CHECKPOINT="$old" bash -c '
+    . "$1"
+    fm_pr_ready_file_checkpoint() {
+      local n
+      n=$(cat "$FM_CHECKPOINT_CALLS" 2>/dev/null || echo 0)
+      n=$((n + 1))
+      printf "%s\n" "$n" > "$FM_CHECKPOINT_CALLS"
+      if [ "$n" -eq 1 ]; then printf "%s" "$FM_OLD_CHECKPOINT"; else printf "rewritten:17"; fi
+    }
+    first=$(fm_pr_ready_ci_generation "$2" rewrite-race run-rewrite-race G)
+    saved=$(fm_pr_ready_meta_value "$(fm_pr_ready_ci_sequence_path "$2" rewrite-race)" checkpoint)
+    second=$(fm_pr_ready_ci_generation "$2" rewrite-race run-rewrite-race GNG)
+    printf "%s:%s:%s" "$first" "$saved" "$second"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state")
+  [ "$result" = "0:$old:1" ] \
+    || fail "concurrent rewrite became a baseline or hid relapse: $result"
+  pass "concurrent CI rewrites remain visible to the next scan"
 }
 
 test_ci_log_snapshot_excludes_concurrent_appends() {
@@ -1312,9 +1363,24 @@ test_keyed_pause_precedence_and_stale_absorption() {
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
   wait_for_exit "$pid" 50 || { reap "$pid"; fail "stale keyed pause was not authoritatively rechecked"; }
+  wait "$pid" 2>/dev/null || true
   grep -F "check: authoritative PR-ready transition for paused" "$out" >/dev/null \
     || fail "stale keyed pause hid authoritative background readiness"
-  pass "keyed pause precedence yields to bounded authoritative readiness rechecks"
+
+  rm -f "$state/.wake-queue" "$state/.hash-$key" "$state/.stale-$key"
+  : > "$state/.paused-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_SCAN_INTERVAL=0 FM_STALE_ESCALATE_SECS=999999 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  sleep 2.5
+  kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; fail "unchanged pause repeated its PR-ready wake: $(cat "$out")"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "unchanged pause printed a duplicate wake: $(cat "$out")"; }
+  [ -e "$state/.pr-ready-paused" ] || { reap "$pid"; fail "unchanged pause cleared committed readiness"; }
+  reap "$pid"
+  pass "keyed pause precedence yields to bounded deduplicated readiness rechecks"
 }
 
 test_background_ci_fixer_wakes_before_stale_status
@@ -1343,10 +1409,12 @@ test_hidden_preexisting_relapse_refines_without_duplicate
 test_observed_relapse_survives_watcher_restart
 test_transient_git_identity_failure_preserves_marker
 test_signal_cannot_starve_pr_ready_sweep
+test_missing_backend_target_still_scans_pr_ready_task
 test_pending_signal_bounds_pr_ready_sweep_work
 test_signal_arriving_during_sweep_has_incremental_latency
 test_sweep_cursor_advances_past_recent_task
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
+test_concurrent_ci_rewrite_is_not_persisted_as_baseline
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
 test_ci_log_long_partial_line_preserves_failure

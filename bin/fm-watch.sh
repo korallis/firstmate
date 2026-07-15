@@ -273,16 +273,14 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # parked, done-nonready, and re-armed observations supersede prior readiness
 # even while the pane is busy or changing. The cadence and readiness marker
 # persist across watcher generations.
-pr_ready_recheck() {  # <window>
-  local win=$1 task scan_file record ready_id ready_identity ready_reason key pause_recheck_file paused_status
-  task=$(window_to_task "$win" "$STATE")
-  [ -n "$task" ] || return 0
+pr_ready_recheck() {  # <task-id> [<window>]
+  local task=$1 win=${2:-} scan_file record ready_id ready_identity ready_reason key pause_recheck_file paused_status
   scan_file=$(fm_pr_ready_scan_path "$STATE" "$task")
   [ "$(age_of "$scan_file")" -ge "$PR_READY_SCAN_INTERVAL" ] || return 0
   paused_status=
   if status_is_paused "$(last_status_line "$STATE/$task.status")"; then
     paused_status=1
-    key=$(printf '%s' "$win" | tr ':/.' '___')
+    key=$(printf '%s' "${win:-task-$task}" | tr ':/.' '___')
     pause_recheck_file="$STATE/.paused-pr-ready-rechecked-$key"
     if [ ! -e "$pause_recheck_file" ]; then
       fm_pr_ready_record_supersession "$STATE" "$task" || exit 1
@@ -290,7 +288,6 @@ pr_ready_recheck() {  # <window>
       return 0
     fi
     if [ "$(age_of "$pause_recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
-      fm_pr_ready_record_supersession "$STATE" "$task" || exit 1
       touch "$scan_file"
       return 0
     fi
@@ -300,6 +297,7 @@ pr_ready_recheck() {  # <window>
     IFS=$'\t' read -r ready_id ready_identity ready_reason <<< "$record"
     fm_wake_append check "pr-ready:$ready_id" "$ready_reason" || exit 1
     fm_pr_ready_commit "$STATE" "$ready_id" "$ready_identity" || exit 1
+    [ -z "$paused_status" ] || touch "$pause_recheck_file"
     touch "$scan_file"
     wake "$ready_reason"
   fi
@@ -323,28 +321,31 @@ EOF
 }
 
 pr_ready_sweep() {  # [pending-signal-records]
-  local pending=${1:-} w task windows cursor candidate fallback seen_cursor is_cursor
-  windows=$(recorded_windows)
+  local pending=${1:-} meta task win tasks cursor candidate fallback seen_cursor is_cursor
+  tasks=$(for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    basename "$meta" .meta
+  done | sort)
   cursor=$(cat "$STATE/.pr-ready-sweep-cursor" 2>/dev/null || true)
   seen_cursor=0
   [ -z "$cursor" ] && seen_cursor=1
-  while IFS= read -r w; do
-    task=$(window_to_task "$w" "$STATE")
+  while IFS= read -r task; do
     [ -n "$task" ] || continue
     is_cursor=0
     if [ "$task" = "$cursor" ]; then seen_cursor=1; is_cursor=1; fi
     pending_status_reports_ready "$pending" "$task" && continue
     [ "$(age_of "$(fm_pr_ready_scan_path "$STATE" "$task")")" -ge "$PR_READY_SCAN_INTERVAL" ] || continue
-    [ -n "$fallback" ] || fallback=$w
-    if [ "$seen_cursor" -eq 1 ] && [ "$is_cursor" -eq 0 ]; then candidate=$w; break; fi
+    [ -n "$fallback" ] || fallback=$task
+    if [ "$seen_cursor" -eq 1 ] && [ "$is_cursor" -eq 0 ]; then candidate=$task; break; fi
   done <<EOF
-$windows
+$tasks
 EOF
   [ -n "$candidate" ] || candidate=$fallback
   [ -n "$candidate" ] || return 0
-  task=$(window_to_task "$candidate" "$STATE")
-  printf '%s\n' "$task" > "$STATE/.pr-ready-sweep-cursor"
-  pr_ready_recheck "$candidate"
+  meta="$STATE/$candidate.meta"
+  win=$(fm_backend_target_of_meta "$meta" 2>/dev/null || true)
+  printf '%s\n' "$candidate" > "$STATE/.pr-ready-sweep-cursor"
+  pr_ready_recheck "$candidate" "$win"
 }
 
 snapshot_pr_ready_status_signals() {  # <pending-signal-records>

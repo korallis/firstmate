@@ -142,7 +142,7 @@ fm_pr_ready_advance_generation() {  # <generation> <before> <events>
 
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   local path tmp run=$3 current=$4 prior_run prior generation log log_size log_id prior_log_id offset last carry
-  local checkpoint_start checkpoint_len checkpoint current_checkpoint new_checkpoint_start new_checkpoint_len new_checkpoint
+  local checkpoint_start checkpoint_len checkpoint current_checkpoint verified_checkpoint new_checkpoint_start new_checkpoint_len new_checkpoint
   local max overlap appended advanced i unread snapshot combined consumed reset_log initial events initial_start initial_bytes
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
   prior_run=$(fm_pr_ready_meta_value "$path" run)
@@ -246,7 +246,11 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     [ "$new_checkpoint_len" -gt 65536 ] && new_checkpoint_len=65536
     new_checkpoint_start=$((offset - new_checkpoint_len))
     new_checkpoint=$(fm_pr_ready_file_checkpoint "$log" "$new_checkpoint_start" "$new_checkpoint_len" || true)
-    if [ -n "$new_checkpoint" ]; then
+    verified_checkpoint=$checkpoint
+    if [ -n "$checkpoint" ] && [ -n "$checkpoint_start" ] && [ -n "$checkpoint_len" ]; then
+      verified_checkpoint=$(fm_pr_ready_file_checkpoint "$log" "$checkpoint_start" "$checkpoint_len" || true)
+    fi
+    if [ -n "$new_checkpoint" ] && { [ -n "$reset_log" ] || [ -z "$checkpoint" ] || [ "$verified_checkpoint" = "$checkpoint" ]; }; then
       checkpoint_start=$new_checkpoint_start
       checkpoint_len=$new_checkpoint_len
       checkpoint=$new_checkpoint
