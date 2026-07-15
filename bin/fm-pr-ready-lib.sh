@@ -160,19 +160,18 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   case "$log_size" in ''|*[!0-9]*) log_size= ;; esac
   if [ -n "$log_size" ]; then
     reset_log=
-    if { [ -n "$prior_log_id" ] && [ "$prior_log_id" != "$log_id" ]; } \
+    if { [ -n "$prior_log_id" ] && [ -n "$log_id" ] && [ "$prior_log_id" != "$log_id" ]; } \
       || { [ -n "$offset" ] && [ "$log_size" -lt "$offset" ]; }; then
       reset_log=1
-      offset=$log_size
-      last=${current:${#current}-1:1}
+      offset=
     fi
     start=
-    if [ -z "$reset_log" ] && [ -z "$offset" ]; then
+    if [ -z "$offset" ]; then
       start=0
       [ "$log_size" -le 65536 ] || start=$((log_size - 65536))
       offset=$start
     fi
-    if [ -z "$reset_log" ] && [ "$log_size" -ge "$offset" ]; then
+    if [ "$log_size" -ge "$offset" ]; then
       if [ "$log_size" -gt "$offset" ]; then
         unread=$((log_size - offset))
         snapshot="$path.snapshot.${BASHPID:-$$}"
@@ -192,6 +191,17 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
             cp "$snapshot" "$parse_snapshot"
           fi
           appended=$(fm_pr_ready_ci_log_events "$(cat "$parse_snapshot")")
+          if [ -n "$reset_log" ] && [ -n "$prior" ]; then
+            max=${#prior}
+            [ "${#appended}" -lt "$max" ] && max=${#appended}
+            overlap=0
+            i=$max
+            while [ "$i" -gt 0 ]; do
+              if [ "${prior:${#prior}-i:i}" = "${appended:0:i}" ]; then overlap=$i; break; fi
+              i=$((i - 1))
+            done
+            appended=${appended:overlap}
+          fi
           advanced=$(fm_pr_ready_advance_generation "$generation" "$last" "$appended")
           generation=${advanced%%$'\t'*}
           last=${advanced#*$'\t'}
@@ -215,6 +225,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     last=${advanced#*$'\t'}
   fi
   [ -n "$last" ] || last=${current:${#current}-1:1}
+  [ -n "$log_id" ] || log_id=$prior_log_id
   tmp="$path.tmp.${BASHPID:-$$}"
   {
     printf 'run=%s\n' "$run"

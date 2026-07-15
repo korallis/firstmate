@@ -787,6 +787,29 @@ test_ci_log_shrink_rebaselines_without_replaying_relapse() {
   pass "CI log shrink establishes a new sequence baseline"
 }
 
+test_ci_log_replacement_preserves_fresh_relapse() {
+  local dir state log replacement result
+  dir=$(make_case ci-log-replacement); state="$dir/state"
+  log="$dir/nm/logs/run-replacement/ci.log"
+  replacement="$dir/replacement.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    replacement=$4
+    initial=$(fm_pr_ready_ci_generation "$state" replacement run-replacement G)
+    printf "checks failed: unit\nall CI checks passed - still monitoring until merged or closed\n" > "$replacement"
+    mv "$replacement" "$log"
+    recovered=$(fm_pr_ready_ci_generation "$state" replacement run-replacement NG)
+    unchanged=$(fm_pr_ready_ci_generation "$state" replacement run-replacement NG)
+    printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement")
+  [ "$result" = "0:1:1" ] || fail "replaced CI log skipped a fresh relapse: $result"
+  pass "CI log replacement preserves fresh relapse transitions"
+}
+
 test_initial_ci_snapshot_preserves_post_state_relapse() {
   local dir state log result
   dir=$(make_case ci-log-initial-race); state="$dir/state"
@@ -995,6 +1018,7 @@ test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
 test_ci_log_shrink_rebaselines_without_replaying_relapse
+test_ci_log_replacement_preserves_fresh_relapse
 test_initial_ci_snapshot_preserves_post_state_relapse
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
