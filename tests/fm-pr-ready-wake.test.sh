@@ -16,6 +16,7 @@ RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready 
 STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR · run-identity: run-7'
 COARSE_STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR'
 UNKNOWN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7'
+REARMED_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-8'
 WORKING_LINE='state: working · source: run-step · ci running'
 FAILED_LINE='state: failed · source: run-step · run failed'
 PAUSED_GREEN_LINE='state: paused · source: status-log · awaiting upstream owner · checks green: PR ready for review (still monitoring for merge/close)'
@@ -186,6 +187,46 @@ test_done_status_seeds_next_generation_dedupe() {
   pass "done/checks-green signal suppresses duplicate readiness in the next watcher generation"
 }
 
+test_done_status_dedupes_through_transient_identity_failures() {
+  local dir state fakebin first_out second_out pid
+  dir=$(make_case done-status-transient); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" status-transient off
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/status-transient.status"
+  printf 'Working...\n' > "$dir/pane"
+  git -C "$dir/status-transient-wt" checkout -q --detach
+  first_out="$dir/first.out"
+  FM_FAKE_CREW_STATE='' FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$first_out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "done status did not wake through transient identity failures"; }
+  grep -F 'signal:' "$first_out" >/dev/null || fail "done status missed its signal wake"
+  [ -e "$state/.pr-ready-status-surfaced-status-transient" ] \
+    || fail "done status did not persist fallback dedupe state"
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2>&1 \
+    || fail "wake drain failed after transient done status"
+  git -C "$dir/status-transient-wt" checkout -q "fm/status-transient"
+
+  second_out="$dir/second.out"
+  FM_FAKE_CREW_STATE="$READY_LINE" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$second_out" &
+  pid=$!
+  sleep 2.5
+  kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; fail "recovered identity duplicated status readiness"; }
+  [ ! -s "$second_out" ] || { reap "$pid"; fail "recovered identity printed a duplicate wake: $(cat "$second_out")"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "recovered identity queued duplicate readiness"; }
+  [ -s "$state/.pr-ready-status-transient" ] || { reap "$pid"; fail "recovered identity did not replace fallback state"; }
+  [ ! -e "$state/.pr-ready-status-surfaced-status-transient" ] \
+    || { reap "$pid"; fail "recovered identity left fallback state behind"; }
+  reap "$pid"
+  pass "done status deduplicates through transient state and git identity failures"
+}
+
 test_coarse_status_refines_to_authoritative_baseline() {
   local dir state fakebin first known marker
   dir=$(make_case coarse-status-refinement); state="$dir/state"; fakebin="$dir/fakebin"
@@ -196,7 +237,7 @@ test_coarse_status_refines_to_authoritative_baseline() {
   known=$(next_ready "$state" "$fakebin" coarse-status "$READY_LINE")
   [ -z "$known" ] || fail "authoritative baseline duplicated coarse status readiness"
   marker=$(cat "$state/.pr-ready-coarse-status")
-  case "$marker" in *'run-7|baseline') ;; *) fail "authoritative baseline did not refine the coarse marker" ;; esac
+  case "$marker" in *'run=run-7|detail=baseline') ;; *) fail "authoritative baseline did not refine the coarse marker" ;; esac
   pass "coarse status readiness refines to authoritative baseline without a duplicate"
 }
 
@@ -209,20 +250,31 @@ test_identity_refinement_relation_matrix() {
       || fail "identity relation $prior -> $current was $actual, expected $expected"
   done <<'MATRIX'
 fm/task|head-1	fm/task|head-1	same
-fm/task|head-1	fm/task|head-1|run-7	upgrade
-fm/task|head-1	fm/task|head-1|run-7|baseline	upgrade
-fm/task|head-1	fm/task|head-1|baseline|run-7	upgrade
-fm/task|head-1|run-7	fm/task|head-1|baseline|run-7	upgrade
-fm/task|head-1|baseline	fm/task|head-1|run-7|baseline	upgrade
-fm/task|head-1|run-7|baseline	fm/task|head-1|baseline|run-7	same
-fm/task|head-1|run-7|baseline	fm/task|head-1|run-7	same
-fm/task|head-1|run-7	fm/task|head-1|run-7|relapse-42:1	upgrade
-fm/task|head-1|run-7|baseline	fm/task|head-1|run-7|relapse-42:1	upgrade
-fm/task|head-1|run-7|baseline	fm/task|head-1|run-8|baseline	upgrade
-fm/task|head-1|run-7|baseline	fm/other|head-1|run-7|baseline	different
-fm/task|head-1|run-7|baseline	fm/task|head-2|run-7|baseline	different
+fm/task|head-1	fm/task|head-1|run=run-7	upgrade
+fm/task|head-1	fm/task|head-1|run=run-7|detail=baseline	upgrade
+fm/task|head-1	fm/task|head-1|detail=baseline|run=run-7	upgrade
+fm/task|head-1|run=run-7	fm/task|head-1|detail=baseline|run=run-7	upgrade
+fm/task|head-1|detail=baseline	fm/task|head-1|run=run-7|detail=baseline	upgrade
+fm/task|head-1|run=run-7|detail=baseline	fm/task|head-1|detail=baseline|run=run-7	same
+fm/task|head-1|run=run-7|detail=baseline	fm/task|head-1|run=run-7	same
+fm/task|head-1|run=run-7	fm/task|head-1|run=run-7|detail=relapse-42:1	upgrade
+fm/task|head-1|run=run-7|detail=baseline	fm/task|head-1|run=run-7|detail=relapse-42:1	upgrade
+fm/task|head-1|run=run-7|detail=baseline	fm/task|head-1|run=run-8|detail=baseline	different
+fm/task|head-1|run=run-7|detail=baseline	fm/other|head-1|run=run-7|detail=baseline	different
+fm/task|head-1|run=run-7|detail=baseline	fm/task|head-2|run=run-7|detail=baseline	different
 MATRIX
   pass "same-head identity refinement is silent while branch and head changes stay distinct"
+}
+
+test_changed_run_identity_resurfaces_same_head() {
+  local dir state fakebin first rearmed
+  dir=$(make_case changed-run-identity); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" changed-run off
+  first=$(next_ready "$state" "$fakebin" changed-run "$UNKNOWN_READY_LINE")
+  commit_record "$state" "$first"
+  rearmed=$(next_ready "$state" "$fakebin" changed-run "$REARMED_READY_LINE")
+  [ -n "$rearmed" ] || fail "new authoritative run on the same head was silently refined"
+  pass "new authoritative run identity re-surfaces same-head readiness"
 }
 
 test_unknown_generation_upgrades_without_duplicate() {
@@ -235,7 +287,7 @@ test_unknown_generation_upgrades_without_duplicate() {
   known=$(next_ready "$state" "$fakebin" unknown-generation "$READY_LINE")
   [ -z "$known" ] || fail "newly readable CI generation duplicated readiness"
   marker=$(cat "$state/.pr-ready-unknown-generation")
-  case "$marker" in *'run-7|baseline') ;; *) fail "newly readable CI generation did not upgrade the marker" ;; esac
+  case "$marker" in *'run=run-7|detail=baseline') ;; *) fail "newly readable CI generation did not upgrade the marker" ;; esac
   recovered=$(next_ready "$state" "$fakebin" unknown-generation "$RECOVERED_READY_LINE")
   [ -z "$recovered" ] || fail "newly readable same-HEAD history duplicated readiness"
   pass "unknown CI generation anchors and refines without duplicate wake"
@@ -430,11 +482,12 @@ test_pr_ready_state_cleanup() {
   local dir state
   dir=$(make_case state-cleanup); state="$dir/state"
   touch "$state/.pr-ready-cleanup" "$state/.last-pr-ready-cleanup" \
-    "$state/.pr-ready-superseded-cleanup"
+    "$state/.pr-ready-superseded-cleanup" "$state/.pr-ready-status-surfaced-cleanup"
   fm_pr_ready_cleanup "$state" cleanup
   [ ! -e "$state/.pr-ready-cleanup" ] || fail "readiness marker survived cleanup"
   [ ! -e "$state/.last-pr-ready-cleanup" ] || fail "readiness cadence marker survived cleanup"
   [ ! -e "$state/.pr-ready-superseded-cleanup" ] || fail "readiness supersession survived cleanup"
+  [ ! -e "$state/.pr-ready-status-surfaced-cleanup" ] || fail "status readiness fallback survived cleanup"
   grep -F "fm_pr_ready_cleanup \"\$STATE\" \"\$ID\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
     || fail "normal teardown does not invoke PR-ready cleanup"
   grep -F "fm_pr_ready_cleanup \"\$sub_state\" \"\$child_id\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
@@ -480,8 +533,10 @@ test_background_ci_fixer_wakes_before_stale_status
 test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
+test_done_status_dedupes_through_transient_identity_failures
 test_coarse_status_refines_to_authoritative_baseline
 test_identity_refinement_relation_matrix
+test_changed_run_identity_resurfaces_same_head
 test_unknown_generation_upgrades_without_duplicate
 test_hidden_preexisting_relapse_refines_without_duplicate
 test_observed_relapse_survives_watcher_restart
