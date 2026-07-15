@@ -486,12 +486,12 @@ EOF
   assert_contains "$out" "state: done" "green ci-monitor run -> done"
   assert_contains "$out" "source: run-step" "green ci-monitor -> run-step source"
   assert_contains "$out" "checks green" "green ci-monitor detail mentions checks green"
-  assert_contains "$out" "run-identity: 01RUN|baseline" "green ci-monitor exposes stable transition generation"
+  assert_contains "$out" "run-identity: 01RUN|events-NG" "green ci-monitor exposes its bounded transition window"
   assert_not_contains "$out" "state: working" "green ci-monitor must not read as still validating"
   pass "ci-monitoring run with checks already green surfaces done"
 }
 
-test_ci_green_relapse_green_changes_bounded_generation() {
+test_ci_green_relapse_green_exposes_transition_window() {
   reset_fakes
   local d first second first_identity second_identity
   d=$(new_case ci-between-scan-relapse)
@@ -511,9 +511,10 @@ EOF
   second=$(run_crew_state "$d" feat-cibetweenscan)
   first_identity=${first#*run-identity: }
   second_identity=${second#*run-identity: }
-  [ "$first_identity" != "$second_identity" ] || fail "between-scan relapse did not change readiness generation"
-  assert_contains "$second_identity" "relapse-" "renewed green retains the bounded relapse transition"
-  pass "bounded CI log retains relapse and renewed green between scans"
+  [ "$first_identity" != "$second_identity" ] || fail "between-scan relapse did not change readiness transition window"
+  assert_contains "$first_identity" "events-G" "initial green exposes its bounded transition window"
+  assert_contains "$second_identity" "events-GNG" "renewed green exposes the intervening bounded transition window"
+  pass "bounded CI log exposes relapse and renewed-green transitions"
 }
 
 test_ci_log_read_is_bounded() {
@@ -1205,7 +1206,7 @@ test_scalar_gate_parked_not_superseded
 test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
 test_ci_monitoring_checks_green_surfaces_done
-test_ci_green_relapse_green_changes_bounded_generation
+test_ci_green_relapse_green_exposes_transition_window
 test_ci_log_read_is_bounded
 test_top_level_ci_checks_green_surfaces_done
 test_ci_monitoring_no_checks_terminal_surfaces_done

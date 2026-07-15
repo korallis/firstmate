@@ -279,6 +279,11 @@ pr_ready_recheck() {  # <window>
   [ -n "$task" ] || return 0
   scan_file=$(fm_pr_ready_scan_path "$STATE" "$task")
   [ "$(age_of "$scan_file")" -ge "$PR_READY_SCAN_INTERVAL" ] || return 0
+  if status_is_paused "$(last_status_line "$STATE/$task.status")"; then
+    fm_pr_ready_record_supersession "$STATE" "$task" || exit 1
+    touch "$scan_file"
+    return 0
+  fi
   record=$(fm_pr_ready_transition "$STATE" "$task" || true)
   if [ -n "$record" ]; then
     IFS=$'\t' read -r ready_id ready_identity ready_reason <<< "$record"
@@ -308,28 +313,16 @@ EOF
 pr_ready_sweep() {  # [pending-signal-records]
   local pending=${1:-} w task windows cursor candidate fallback seen_cursor
   windows=$(recorded_windows)
-  if [ -z "$pending" ]; then
-    while IFS= read -r w; do
-      task=$(window_to_task "$w" "$STATE")
-      [ -n "$task" ] || continue
-      pending_status_reports_ready "$pending" "$task" && continue
-      pr_ready_recheck "$w"
-    done <<EOF
-$windows
-EOF
-    return
-  fi
-
   cursor=$(cat "$STATE/.pr-ready-sweep-cursor" 2>/dev/null || true)
   seen_cursor=0
   [ -z "$cursor" ] && seen_cursor=1
   while IFS= read -r w; do
     task=$(window_to_task "$w" "$STATE")
     [ -n "$task" ] || continue
-    if [ "$task" = "$cursor" ]; then seen_cursor=1; continue; fi
     pending_status_reports_ready "$pending" "$task" && continue
     [ "$(age_of "$(fm_pr_ready_scan_path "$STATE" "$task")")" -ge "$PR_READY_SCAN_INTERVAL" ] || continue
     [ -n "$fallback" ] || fallback=$w
+    if [ "$task" = "$cursor" ]; then seen_cursor=1; continue; fi
     if [ "$seen_cursor" -eq 1 ]; then candidate=$w; break; fi
   done <<EOF
 $windows
@@ -452,27 +445,19 @@ clear_pause_tracking() {  # <window>
 }
 
 pause_state_class() {  # <window> <task>
-  local win=$1 task=$2 key last recheck_file class
+  local win=$1 task=$2 key last recheck_file
   key=${win//:/_}
   key=${key//\//_}
   key=${key//./_}
   last=$(last_status_line "$STATE/$task.status")
   recheck_file="$STATE/.paused-rechecked-$key"
-  if ! status_is_paused "$last"; then
-    rm -f "$recheck_file"
-    crew_absorb_class "$task"
-    return
-  fi
-  if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
+  if status_is_paused "$last"; then
+    date +%s > "$recheck_file"
     printf 'paused'
     return
   fi
-  class=$(crew_absorb_class "$task")
-  case "$class" in
-    paused) date +%s > "$recheck_file" ;;
-    *) rm -f "$recheck_file" ;;
-  esac
-  printf '%s' "$class"
+  rm -f "$recheck_file"
+  crew_absorb_class "$task"
 }
 
 surface_nonterminal_stale() {  # <window> <hash>

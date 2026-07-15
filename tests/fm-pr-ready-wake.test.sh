@@ -12,7 +12,9 @@ WATCH="$ROOT/bin/fm-watch.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-ready-wake-tests)
 READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|baseline'
 ALT_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7|baseline · status-log event superseded by authoritative run'
-RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|relapse-1289303112:42'
+RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|events-GNG'
+REPEATED_RECOVERED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|events-GNGNG'
+ROTATED_READY_LINE='state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close) · run-identity: run-7|events-G'
 STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR · run-identity: run-7'
 COARSE_STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR'
 UNKNOWN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7'
@@ -425,7 +427,7 @@ test_hidden_preexisting_relapse_refines_without_duplicate() {
   recovered=$(next_ready "$state" "$fakebin" hidden-relapse "$RECOVERED_READY_LINE")
   [ -z "$recovered" ] || fail "newly readable preexisting relapse duplicated readiness"
   marker=$(cat "$state/.pr-ready-hidden-relapse")
-  case "$marker" in *'relapse-1289303112:42') ;; *) fail "newly readable history did not refine the marker" ;; esac
+  case "$marker" in *'detail=sequence-0') ;; *) fail "newly readable history did not refine the marker" ;; esac
   pass "hidden preexisting relapse refines readiness without a duplicate"
 }
 
@@ -513,15 +515,51 @@ SH
   pass "pending signals bound the PR-ready sweep to one task read"
 }
 
-test_between_scan_relapse_generation_resurfaces() {
-  local dir state fakebin first recovered
+test_signal_arriving_during_sweep_has_incremental_latency() {
+  local dir state fakebin out pid id calls
+  dir=$(make_case signal-sweep-race); state="$dir/state"; fakebin="$dir/fakebin"
+  for id in race-one race-two race-three; do make_task "$dir" "$id" off; done
+  printf 'Working...\n' > "$dir/pane"
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'x\n' >> "${FM_FAKE_CALLS:?}"
+sleep 1
+printf 'state: working · source: run-step · ci running\n'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  out="$dir/watch.out"
+  FM_FAKE_CALLS="$dir/calls" FM_FAKE_TMUX_CAPTURE="$dir/pane" PATH="$fakebin:$PATH" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_SCAN_INTERVAL=0 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" &
+  pid=$!
+  sleep 0.2
+  printf 'blocked: arrived during readiness sweep\n' > "$state/unrelated.status"
+  wait_for_exit "$pid" 60 || { reap "$pid"; fail "signal arriving during sweep did not wake"; }
+  grep -F 'signal:' "$out" >/dev/null || fail "signal arriving during sweep was not surfaced"
+  calls=$(wc -l < "$dir/calls" | tr -d ' ')
+  [ "$calls" -le 2 ] || fail "signal race waited behind $calls readiness reads"
+  pass "readiness sweep is incremental when a signal arrives mid-scan"
+}
+
+test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation() {
+  local dir state fakebin first recovered repeated rotated after_rotation
   dir=$(make_case between-scan-relapse); state="$dir/state"; fakebin="$dir/fakebin"
   make_task "$dir" between-scan-relapse off
-  first=$(next_ready "$state" "$fakebin" between-scan-relapse "$READY_LINE")
+  first=$(next_ready "$state" "$fakebin" between-scan-relapse "$ROTATED_READY_LINE")
   commit_record "$state" "$first"
   recovered=$(next_ready "$state" "$fakebin" between-scan-relapse "$RECOVERED_READY_LINE")
-  [ -n "$recovered" ] || fail "same-run between-scan relapse generation was suppressed"
-  pass "same-run between-scan relapse generation re-surfaces renewed green"
+  [ -n "$recovered" ] || fail "same-run between-scan relapse occurrence was suppressed"
+  commit_record "$state" "$recovered"
+  repeated=$(next_ready "$state" "$fakebin" between-scan-relapse "$REPEATED_RECOVERED_READY_LINE")
+  [ -n "$repeated" ] || fail "identical repeated relapse cycle reused the prior identity"
+  commit_record "$state" "$repeated"
+  rotated=$(next_ready "$state" "$fakebin" between-scan-relapse "$ROTATED_READY_LINE")
+  [ -z "$rotated" ] || fail "bounded-tail rotation emitted a duplicate readiness wake"
+  after_rotation=$(next_ready "$state" "$fakebin" between-scan-relapse "$RECOVERED_READY_LINE")
+  [ -n "$after_rotation" ] || fail "relapse after bounded-tail rotation reused an old identity"
+  pass "persistent occurrence sequence survives repeated cycles and bounded-tail rotation"
 }
 
 test_relapse_rearm_and_head_change_supersede_green() {
@@ -631,13 +669,14 @@ test_pr_ready_state_cleanup() {
   dir=$(make_case state-cleanup); state="$dir/state"
   touch "$state/.pr-ready-cleanup" "$state/.last-pr-ready-cleanup" \
     "$state/.pr-ready-superseded-cleanup" "$state/.pr-ready-status-surfaced-cleanup" \
-    "$state/.pr-ready-observed-cleanup"
+    "$state/.pr-ready-observed-cleanup" "$state/.pr-ready-ci-sequence-cleanup"
   fm_pr_ready_cleanup "$state" cleanup
   [ ! -e "$state/.pr-ready-cleanup" ] || fail "readiness marker survived cleanup"
   [ ! -e "$state/.last-pr-ready-cleanup" ] || fail "readiness cadence marker survived cleanup"
   [ ! -e "$state/.pr-ready-superseded-cleanup" ] || fail "readiness supersession survived cleanup"
   [ ! -e "$state/.pr-ready-status-surfaced-cleanup" ] || fail "status readiness fallback survived cleanup"
   [ ! -e "$state/.pr-ready-observed-cleanup" ] || fail "readiness observation time survived cleanup"
+  [ ! -e "$state/.pr-ready-ci-sequence-cleanup" ] || fail "CI occurrence sequence survived cleanup"
   grep -F "fm_pr_ready_cleanup \"\$STATE\" \"\$ID\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
     || fail "normal teardown does not invoke PR-ready cleanup"
   grep -F "fm_pr_ready_cleanup \"\$sub_state\" \"\$child_id\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
@@ -659,7 +698,7 @@ test_keyed_pause_precedence_and_stale_absorption() {
   printf '%s' "$(seen_sig "$state/paused.status")" > "$state/.seen-paused_status"
   printf 'unchanged paused pane\n' > "$dir/pane"
   export FM_FAKE_TMUX_CAPTURE="$dir/pane"
-  export FM_FAKE_CREW_STATE="$PAUSED_GREEN_LINE"
+  export FM_FAKE_CREW_STATE="$READY_LINE"
   export FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh"
   out="$dir/watch.out"
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
@@ -699,7 +738,8 @@ test_observed_relapse_survives_watcher_restart
 test_transient_git_identity_failure_preserves_marker
 test_signal_cannot_starve_pr_ready_sweep
 test_pending_signal_bounds_pr_ready_sweep_work
-test_between_scan_relapse_generation_resurfaces
+test_signal_arriving_during_sweep_has_incremental_latency
+test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
 test_changing_pane_failure_is_observed_by_task_scan

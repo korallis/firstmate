@@ -323,12 +323,12 @@ nm_effective_ci_step_status() {
 # monitoring until merged or closed" (verified against 360+ real run logs under
 # ~/.no-mistakes/logs/*/ci.log on the installed v1.32.2 binary, including the
 # actual PR #252 run). Reads the ci step's bounded log tail once, scans the most
-# recent recognized marker for current state, and derives a stable generation
-# from non-green markers between the two most recent green observations. This
-# retains a failure or re-arm followed by renewed green between watcher scans
-# without fetching the growing full log.
+# recent recognized marker for current state, and emits the bounded sequence of
+# green/non-green transitions. The readiness detector persists an occurrence
+# sequence from overlapping snapshots so repeated identical relapse cycles and
+# bounded-tail rotation remain temporally distinct without fetching the full log.
 nm_ci_checks_snapshot() {
-  local run_id log_tail recognized marker relapse generation result
+  local run_id log_tail recognized marker events generation result
   run_id=$(strip_quotes "$(nm_field id)")
   [ -n "$run_id" ] || { printf 'unknown|unknown'; return; }
   log_tail=$(nm_run axi logs --step ci --run "$run_id") || true
@@ -336,21 +336,12 @@ nm_ci_checks_snapshot() {
   recognized=$(printf '%s\n' "$log_tail" \
     | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout' || true)
   marker=$(printf '%s\n' "$recognized" | tail -1)
-  relapse=$(printf '%s\n' "$recognized" | awk '
-    /CI checks passed|no CI checks reported - still monitoring/ {
-      if (green) completed = cycle
-      green = 1
-      cycle = ""
-      next
-    }
-    green { cycle = cycle $0 "\n" }
-    END { printf "%s", completed }
+  events=$(printf '%s\n' "$recognized" | awk '
+    /CI checks passed|no CI checks reported - still monitoring/ { state = "G" }
+    /no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout/ { state = "N" }
+    state != "" && state != prior { printf "%s", state; prior = state }
   ')
-  if [ -n "$relapse" ]; then
-    generation="relapse-$(printf '%s' "$relapse" | cksum | awk '{ print $1 ":" $2 }')"
-  else
-    generation=baseline
-  fi
+  if [ -n "$events" ]; then generation="events-$events"; else generation=unknown; fi
   case "$marker" in
     *"checks passed"*|*"no CI checks reported - still monitoring"*) result=green ;;
     *"no CI checks reported yet"*|*"checks failed"*|*"issues detected"*|*"CI checks running"*|*"base branch advanced"*"re-arming CI monitor timeout"*) result=not-ready ;;

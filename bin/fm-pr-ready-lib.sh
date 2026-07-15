@@ -60,12 +60,19 @@ fm_pr_ready_observed_path() {  # <state> <task-id>
   printf '%s/.pr-ready-observed-%s' "$1" "$key"
 }
 
+fm_pr_ready_ci_sequence_path() {  # <state> <task-id>
+  local key
+  key=$(printf '%s' "$2" | tr ':/.' '___')
+  printf '%s/.pr-ready-ci-sequence-%s' "$1" "$key"
+}
+
 fm_pr_ready_cleanup() {  # <state> <task-id>
   rm -f "$(fm_pr_ready_marker_path "$1" "$2")" \
     "$(fm_pr_ready_scan_path "$1" "$2")" \
     "$(fm_pr_ready_superseded_path "$1" "$2")" \
     "$(fm_pr_ready_status_surfaced_path "$1" "$2")" \
-    "$(fm_pr_ready_observed_path "$1" "$2")"
+    "$(fm_pr_ready_observed_path "$1" "$2")" \
+    "$(fm_pr_ready_ci_sequence_path "$1" "$2")"
 }
 
 # Print ready, supersede, or indeterminate for one canonical crew-state line.
@@ -89,8 +96,47 @@ fm_pr_ready_verdict() {  # <crew-state-line>
   esac
 }
 
-fm_pr_ready_identity() {  # <meta> <crew-state-line>
-  local meta=$1 line=$2 wt branch head authority run details item
+fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
+  local path tmp run=$3 current=$4 prior_run prior generation max overlap appended before i char
+  path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
+  prior_run=$(fm_pr_ready_meta_value "$path" run)
+  prior=$(fm_pr_ready_meta_value "$path" window)
+  generation=$(fm_pr_ready_meta_value "$path" generation)
+  case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
+  if [ "$prior_run" != "$run" ]; then
+    prior=
+    generation=0
+  fi
+  if [ -n "$prior" ]; then
+    max=${#prior}
+    [ "${#current}" -lt "$max" ] && max=${#current}
+    overlap=0
+    i=$max
+    while [ "$i" -gt 0 ]; do
+      if [ "${prior:${#prior}-i:i}" = "${current:0:i}" ]; then overlap=$i; break; fi
+      i=$((i - 1))
+    done
+    appended=${current:overlap}
+    before=${prior:${#prior}-1:1}
+    i=0
+    while [ "$i" -lt "${#appended}" ]; do
+      char=${appended:i:1}
+      if [ "$before" = N ] && [ "$char" = G ]; then generation=$((generation + 1)); fi
+      before=$char
+      i=$((i + 1))
+    done
+  fi
+  tmp="$path.tmp.${BASHPID:-$$}"
+  {
+    printf 'run=%s\n' "$run"
+    printf 'window=%s\n' "$current"
+    printf 'generation=%s\n' "$generation"
+  } > "$tmp" && mv -f "$tmp" "$path" || return 1
+  printf '%s' "$generation"
+}
+
+fm_pr_ready_identity() {  # <meta> <crew-state-line> [<state> <task-id>]
+  local meta=$1 line=$2 state=${3:-} id=${4:-} wt branch head authority run details item events generation
   wt=$(fm_pr_ready_meta_value "$meta" worktree)
   [ -n "$wt" ] && [ -d "$wt" ] || return 1
   branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
@@ -110,9 +156,13 @@ fm_pr_ready_identity() {  # <meta> <crew-state-line>
       details=${authority#*|}
       while [ -n "$details" ]; do
         item=${details%%|*}
-        printf '|detail=%s' "$item"
+        case "$item" in events-*) events=${item#events-} ;; *) printf '|detail=%s' "$item" ;; esac
         if [ "$details" = "$item" ]; then details=; else details=${details#*|}; fi
       done
+      if [ -n "${events:-}" ] && [ -n "$state" ] && [ -n "$id" ]; then
+        generation=$(fm_pr_ready_ci_generation "$state" "$id" "$run" "$events") || return 1
+        printf '|detail=sequence-%s' "$generation"
+      fi
     fi
   fi
 }
@@ -242,7 +292,7 @@ fm_pr_ready_identity_relation() {  # <prior> <current> [<observed-ms>]
     printf 'different'
   elif [ -n "$prior_detail" ] && [ -n "$current_detail" ] \
     && [ "$prior_detail" != "$current_detail" ]; then
-    if [ "$current_detail" = baseline ]; then printf 'same'; else printf 'different'; fi
+    case "$current_detail" in baseline) printf 'same' ;; sequence-0) printf 'upgrade' ;; *) printf 'different' ;; esac
   elif fm_pr_ready_components_subset "$current_components" "$prior_components"; then
     printf 'same'
   else
@@ -377,7 +427,7 @@ fm_pr_ready_transition() {  # <state> <task-id>
       return 1
       ;;
     ready)
-      identity=$(fm_pr_ready_identity "$meta" "$line") || return 1
+      identity=$(fm_pr_ready_identity "$meta" "$line" "$state" "$id") || return 1
       if [ -e "$surfaced" ]; then
         relation=$(fm_pr_ready_surfaced_relation "$surfaced" "$identity")
         if [ "$relation" = upgrade ]; then
@@ -430,7 +480,7 @@ fm_pr_ready_seed_status_signal() {  # <state> <task-id>
       ;;
     ready)
       [ ! -e "$superseded" ] || return 1
-      identity=$(fm_pr_ready_identity "$meta" "$line") || {
+      identity=$(fm_pr_ready_identity "$meta" "$line" "$state" "$id") || {
         [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms"
         return 0
       }
