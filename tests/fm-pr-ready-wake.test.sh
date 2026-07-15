@@ -1096,6 +1096,29 @@ test_initial_ci_snapshot_preserves_post_state_relapse() {
   pass "initial CI snapshot preserves relapse appended after authoritative state"
 }
 
+test_initial_ci_snapshot_excludes_concurrent_append() {
+  local dir state log result
+  dir=$(make_case ci-log-initial-bounded); state="$dir/state"
+  log="$dir/nm/logs/run-initial-bounded/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    fm_pr_ready_file_size() {
+      local size
+      if [ "$(uname)" = Darwin ]; then size=$(stat -f %z "$1"); else size=$(stat -c %s "$1"); fi
+      printf "%s" "$size"
+      printf "checks failed: unit\n" >> "$1"
+    }
+    fm_pr_ready_ci_generation "$state" initial-bounded run-initial-bounded G >/dev/null
+    fm_pr_ready_meta_value "$state/.pr-ready-ci-sequence-initial-bounded" last
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
+  [ "$result" = G ] || fail "initial CI snapshot consumed an append beyond its sampled size: $result"
+  pass "initial CI snapshot excludes concurrent appends beyond its sampled size"
+}
+
 test_relapse_rearm_and_head_change_supersede_green() {
   local dir state fakebin first again marker
   dir=$(make_case relapse-rearm); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1245,11 +1268,21 @@ test_keyed_pause_precedence_and_stale_absorption() {
   [ ! -s "$out" ] || { reap "$pid"; fail "keyed pause printed a wake reason: $(cat "$out")"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "keyed pause queued a PR-ready or stale wake"; }
   key=$(printf '%s' 'test:fm-paused' | tr ':/.' '___')
-  [ -e "$state/.paused-$key" ] || { reap "$pid"; fail "stale keyed pause did not enter bounded pause tracking"; }
+  [ -e "$state/.paused-pr-ready-rechecked-$key" ] \
+    || { reap "$pid"; fail "keyed pause did not start its bounded authoritative recheck cadence"; }
   reap "$pid"
-  record=$(next_ready "$state" "$fakebin" paused "$READY_LINE")
-  [ -n "$record" ] || fail "resolved pause did not restore the underlying ready transition"
-  pass "keyed green pauses keep pause precedence while stale, then re-surface readiness after resolution"
+
+  rm -f "$state/.last-pr-ready-paused"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_SCAN_INTERVAL=0 FM_STALE_ESCALATE_SECS=0 \
+    FM_PAUSE_RESURFACE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "stale keyed pause was not authoritatively rechecked"; }
+  grep -F "check: authoritative PR-ready transition for paused" "$out" >/dev/null \
+    || fail "stale keyed pause hid authoritative background readiness"
+  pass "keyed pause precedence yields to bounded authoritative readiness rechecks"
 }
 
 test_background_ci_fixer_wakes_before_stale_status
@@ -1296,6 +1329,7 @@ test_ci_log_reset_boundary_preserves_first_event
 test_ci_log_replacement_preserves_fresh_relapse
 test_identical_ci_log_replacement_remains_deduplicated
 test_initial_ci_snapshot_preserves_post_state_relapse
+test_initial_ci_snapshot_excludes_concurrent_append
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
 test_changing_pane_failure_is_observed_by_task_scan

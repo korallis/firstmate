@@ -143,7 +143,7 @@ fm_pr_ready_advance_generation() {  # <generation> <before> <events>
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   local path tmp run=$3 current=$4 prior_run prior generation log log_size log_id prior_log_id offset last carry
   local checkpoint_start checkpoint_len checkpoint current_checkpoint new_checkpoint_start new_checkpoint_len new_checkpoint
-  local max overlap appended advanced i unread snapshot combined consumed reset_log initial events
+  local max overlap appended advanced i unread snapshot combined consumed reset_log initial events initial_start initial_bytes
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
   prior_run=$(fm_pr_ready_meta_value "$path" run)
   prior=$(fm_pr_ready_meta_value "$path" window)
@@ -190,7 +190,10 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
         generation=${advanced%%$'\t'*}
         last=${advanced#*$'\t'}
       fi
-      initial=$(tail -c 65536 "$log" 2>/dev/null || true)
+      initial_bytes=$log_size
+      [ "$initial_bytes" -gt 65536 ] && initial_bytes=65536
+      initial_start=$((log_size - initial_bytes))
+      initial=$(tail -c "+$((initial_start + 1))" "$log" 2>/dev/null | head -c "$initial_bytes" || true)
       events=$(fm_pr_ready_ci_log_events "$initial")
       if [ -n "$events" ]; then last=${events:${#events}-1:1}; else last=${current:${#current}-1:1}; fi
       carry=

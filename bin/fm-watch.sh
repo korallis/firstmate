@@ -274,15 +274,26 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # even while the pane is busy or changing. The cadence and readiness marker
 # persist across watcher generations.
 pr_ready_recheck() {  # <window>
-  local win=$1 task scan_file record ready_id ready_identity ready_reason
+  local win=$1 task scan_file record ready_id ready_identity ready_reason key pause_recheck_file paused_status
   task=$(window_to_task "$win" "$STATE")
   [ -n "$task" ] || return 0
   scan_file=$(fm_pr_ready_scan_path "$STATE" "$task")
   [ "$(age_of "$scan_file")" -ge "$PR_READY_SCAN_INTERVAL" ] || return 0
+  paused_status=
   if status_is_paused "$(last_status_line "$STATE/$task.status")"; then
-    fm_pr_ready_record_supersession "$STATE" "$task" || exit 1
-    touch "$scan_file"
-    return 0
+    paused_status=1
+    key=$(printf '%s' "$win" | tr ':/.' '___')
+    pause_recheck_file="$STATE/.paused-pr-ready-rechecked-$key"
+    if [ ! -e "$pause_recheck_file" ]; then
+      fm_pr_ready_record_supersession "$STATE" "$task" || exit 1
+      touch "$pause_recheck_file" "$scan_file"
+      return 0
+    fi
+    if [ "$(age_of "$pause_recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
+      fm_pr_ready_record_supersession "$STATE" "$task" || exit 1
+      touch "$scan_file"
+      return 0
+    fi
   fi
   record=$(fm_pr_ready_transition "$STATE" "$task" || true)
   if [ -n "$record" ]; then
@@ -292,6 +303,7 @@ pr_ready_recheck() {  # <window>
     touch "$scan_file"
     wake "$ready_reason"
   fi
+  [ -z "$paused_status" ] || touch "$pause_recheck_file"
   touch "$scan_file"
 }
 
@@ -431,7 +443,7 @@ clear_pause_state() {  # <window>
   key=${win//:/_}
   key=${key//\//_}
   key=${key//./_}
-  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
+  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-pr-ready-rechecked-$key" "$STATE/.paused-resurfaced-$key"
 }
 
 clear_pause_tracking() {  # <window>
@@ -444,19 +456,27 @@ clear_pause_tracking() {  # <window>
 }
 
 pause_state_class() {  # <window> <task>
-  local win=$1 task=$2 key last recheck_file
+  local win=$1 task=$2 key last recheck_file class
   key=${win//:/_}
   key=${key//\//_}
   key=${key//./_}
   last=$(last_status_line "$STATE/$task.status")
   recheck_file="$STATE/.paused-rechecked-$key"
-  if status_is_paused "$last"; then
-    date +%s > "$recheck_file"
+  if ! status_is_paused "$last"; then
+    rm -f "$recheck_file"
+    crew_absorb_class "$task"
+    return
+  fi
+  if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
     printf 'paused'
     return
   fi
-  rm -f "$recheck_file"
-  crew_absorb_class "$task"
+  class=$(crew_absorb_class "$task")
+  case "$class" in
+    paused) date +%s > "$recheck_file" ;;
+    *) rm -f "$recheck_file" ;;
+  esac
+  printf '%s' "$class"
 }
 
 surface_nonterminal_stale() {  # <window> <hash>
