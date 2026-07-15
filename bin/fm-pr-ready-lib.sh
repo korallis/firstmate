@@ -152,8 +152,8 @@ fm_pr_ready_advance_generation() {  # <generation> <before> <events>
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   local path tmp run=$3 current=$4 prior_run prior generation log log_size log_id prior_log_id offset last carry
   local checkpoint_start checkpoint_len checkpoint current_checkpoint verified_checkpoint new_checkpoint_start new_checkpoint_len new_checkpoint
-  local snapshot_checkpoint snapshot_checkpoint_start snapshot_checkpoint_len
-  local max overlap appended advanced i unread snapshot combined consumed reset_log initial events initial_start initial_bytes
+  local snapshot_checkpoint snapshot_checkpoint_start snapshot_checkpoint_len checkpoint_snapshot checkpoint_prefix
+  local max overlap appended advanced i unread snapshot combined consumed reset_log initial events initial_start initial_bytes prior_offset
   local saved_prior saved_generation saved_offset saved_last saved_carry saved_log_id
   local saved_checkpoint_start saved_checkpoint_len saved_checkpoint
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
@@ -231,23 +231,37 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     elif [ "$log_size" -gt "$offset" ]; then
       unread=$((log_size - offset))
       [ "$unread" -gt 65536 ] && unread=65536
+      prior_offset=$offset
       snapshot="$path.snapshot.${BASHPID:-$$}"
       combined="$snapshot.combined"
+      checkpoint_snapshot="$snapshot.checkpoint"
       tail -c "+$((offset + 1))" "$log" 2>/dev/null | head -c "$unread" > "$snapshot" || true
       { printf '%s' "$carry"; cat "$snapshot"; } > "$combined"
       carry=
       if [ "$(tail -c 1 "$combined" 2>/dev/null | wc -l | tr -d ' ')" != 1 ]; then
         carry=$(tail -c 256 "$combined" 2>/dev/null | tr -d '\r\n')
       fi
-      consumed=$unread
+      consumed=$(wc -c < "$snapshot" | tr -d ' ')
       if [ "$consumed" -gt 0 ]; then
         appended=$(fm_pr_ready_ci_log_events "$(cat "$combined")")
         advanced=$(fm_pr_ready_advance_generation "$generation" "$last" "$appended")
         generation=${advanced%%$'\t'*}
         last=${advanced#*$'\t'}
         offset=$((offset + consumed))
+        snapshot_checkpoint_len=$offset
+        [ "$snapshot_checkpoint_len" -gt 65536 ] && snapshot_checkpoint_len=65536
+        snapshot_checkpoint_start=$((offset - snapshot_checkpoint_len))
+        checkpoint_prefix=$((prior_offset - snapshot_checkpoint_start))
+        : > "$checkpoint_snapshot"
+        if [ "$checkpoint_prefix" -gt 0 ]; then
+          tail -c "+$((snapshot_checkpoint_start + 1))" "$log" 2>/dev/null \
+            | head -c "$checkpoint_prefix" >> "$checkpoint_snapshot" || true
+        fi
+        cat "$snapshot" >> "$checkpoint_snapshot"
+        snapshot_checkpoint_len=$(wc -c < "$checkpoint_snapshot" | tr -d ' ')
+        snapshot_checkpoint=$(cksum "$checkpoint_snapshot" | awk '{print $1 ":" $2}')
       fi
-      rm -f "$snapshot" "$combined"
+      rm -f "$snapshot" "$combined" "$checkpoint_snapshot"
     fi
   elif [ -z "$offset" ] && [ -n "$prior" ]; then
     max=${#prior}

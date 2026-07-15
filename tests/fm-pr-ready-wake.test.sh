@@ -880,6 +880,38 @@ test_reset_snapshot_checkpoint_matches_parsed_bytes() {
   pass "reset snapshots derive checkpoints from the bytes they parse"
 }
 
+test_incremental_snapshot_checkpoint_matches_parsed_bytes() {
+  local dir state log sequence payload_b payload_len payload_a expected saved
+  dir=$(make_case incremental-snapshot-checkpoint); state="$dir/state"
+  log="$dir/nm/logs/run-incremental-snapshot/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'CI checks passed\n' > "$log"
+  NM_HOME="$dir/nm" fm_pr_ready_ci_generation "$state" incremental-snapshot run-incremental-snapshot G >/dev/null
+  payload_b=$'checks failed: unit\nCI checks passed\n'
+  payload_len=$(printf '%s' "$payload_b" | wc -c | tr -d ' ')
+  payload_a=$(printf '%*s' "$payload_len" '' | tr ' ' x)
+  printf '%s' "$payload_a" >> "$log"
+  expected=$(fm_pr_ready_file_checkpoint "$log" 0 "$(wc -c < "$log" | tr -d ' ')")
+  saved=$(NM_HOME="$dir/nm" FM_RACE_LOG="$log" bash -c '
+    . "$1"
+    original=$(declare -f fm_pr_ready_ci_log_events)
+    eval "${original/fm_pr_ready_ci_log_events/fm_pr_ready_ci_log_events_original}"
+    fm_pr_ready_ci_log_events() {
+      local data=$1
+      if [ ! -e "$FM_RACE_LOG.mutated" ]; then
+        : > "$FM_RACE_LOG.mutated"
+        printf "CI checks passed\nchecks failed: unit\nCI checks passed\n" > "$FM_RACE_LOG"
+      fi
+      fm_pr_ready_ci_log_events_original "$data"
+    }
+    fm_pr_ready_ci_generation "$2" incremental-snapshot run-incremental-snapshot G >/dev/null
+    fm_pr_ready_meta_value "$(fm_pr_ready_ci_sequence_path "$2" incremental-snapshot)" checkpoint
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state")
+  [ "$saved" = "$expected" ] \
+    || fail "incremental snapshot persisted a checkpoint from different live bytes: $saved != $expected"
+  pass "incremental snapshots derive checkpoints from the bytes they parse"
+}
+
 test_ci_log_snapshot_excludes_concurrent_appends() {
   local dir state log result
   dir=$(make_case ci-log-snapshot); state="$dir/state"
@@ -1537,6 +1569,7 @@ test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_concurrent_ci_rewrite_is_not_persisted_as_baseline
 test_checkpoint_race_discards_tentative_relapse_state
 test_reset_snapshot_checkpoint_matches_parsed_bytes
+test_incremental_snapshot_checkpoint_matches_parsed_bytes
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
 test_ci_log_long_partial_line_preserves_failure
