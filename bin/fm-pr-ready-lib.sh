@@ -143,6 +143,7 @@ fm_pr_ready_advance_generation() {  # <generation> <before> <events>
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   local path tmp run=$3 current=$4 prior_run prior generation log log_size log_id prior_log_id offset last carry
   local checkpoint_start checkpoint_len checkpoint current_checkpoint verified_checkpoint new_checkpoint_start new_checkpoint_len new_checkpoint
+  local snapshot_checkpoint snapshot_checkpoint_start snapshot_checkpoint_len
   local max overlap appended advanced i unread snapshot combined consumed reset_log initial events initial_start initial_bytes
   local saved_prior saved_generation saved_offset saved_last saved_carry saved_log_id
   local saved_checkpoint_start saved_checkpoint_len saved_checkpoint
@@ -207,6 +208,9 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
       snapshot="$path.snapshot.${BASHPID:-$$}"
       tail -c "+$((initial_start + 1))" "$log" 2>/dev/null | head -c "$initial_bytes" > "$snapshot" || true
       initial=$(cat "$snapshot")
+      snapshot_checkpoint_start=$initial_start
+      snapshot_checkpoint_len=$(wc -c < "$snapshot" | tr -d ' ')
+      snapshot_checkpoint=$(cksum "$snapshot" | awk '{print $1 ":" $2}')
       events=$(fm_pr_ready_ci_log_events "$initial")
       if [ -n "$events" ]; then last=${events:${#events}-1:1}; else last=${current:${#current}-1:1}; fi
       carry=
@@ -214,7 +218,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
         carry=$(tail -c 256 "$snapshot" 2>/dev/null | tr -d '\r\n')
       fi
       rm -f "$snapshot"
-      offset=$log_size
+      offset=$((initial_start + snapshot_checkpoint_len))
     elif [ "$log_size" -gt "$offset" ]; then
       unread=$((log_size - offset))
       [ "$unread" -gt 65536 ] && unread=65536
@@ -253,10 +257,16 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   [ -n "$last" ] || last=${current:${#current}-1:1}
   [ -n "$log_id" ] || log_id=$prior_log_id
   if [ -n "$offset" ]; then
-    new_checkpoint_len=$offset
-    [ "$new_checkpoint_len" -gt 65536 ] && new_checkpoint_len=65536
-    new_checkpoint_start=$((offset - new_checkpoint_len))
-    new_checkpoint=$(fm_pr_ready_file_checkpoint "$log" "$new_checkpoint_start" "$new_checkpoint_len" || true)
+    if [ -n "$snapshot_checkpoint" ]; then
+      new_checkpoint_start=$snapshot_checkpoint_start
+      new_checkpoint_len=$snapshot_checkpoint_len
+      new_checkpoint=$snapshot_checkpoint
+    else
+      new_checkpoint_len=$offset
+      [ "$new_checkpoint_len" -gt 65536 ] && new_checkpoint_len=65536
+      new_checkpoint_start=$((offset - new_checkpoint_len))
+      new_checkpoint=$(fm_pr_ready_file_checkpoint "$log" "$new_checkpoint_start" "$new_checkpoint_len" || true)
+    fi
     verified_checkpoint=$checkpoint
     if [ -n "$checkpoint" ] && [ -n "$checkpoint_start" ] && [ -n "$checkpoint_len" ]; then
       verified_checkpoint=$(fm_pr_ready_file_checkpoint "$log" "$checkpoint_start" "$checkpoint_len" || true)

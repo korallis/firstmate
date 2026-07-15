@@ -847,6 +847,39 @@ test_checkpoint_race_discards_tentative_relapse_state() {
   pass "checkpoint races discard tentative relapse state before coherent reprocessing"
 }
 
+test_reset_snapshot_checkpoint_matches_parsed_bytes() {
+  local dir state log sequence result
+  dir=$(make_case reset-snapshot-checkpoint); state="$dir/state"
+  log="$dir/nm/logs/run-reset-snapshot/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'CI checks passed\n' > "$log"
+  sequence=$(fm_pr_ready_ci_sequence_path "$state" reset-snapshot)
+  {
+    printf 'run=run-reset-snapshot\nwindow=G\ngeneration=0\n'
+    printf 'offset=%s\nlast=G\ncarry=\n' "$(wc -c < "$log" | tr -d ' ')"
+    printf 'log_id=stale-log-id\ncheckpoint_start=0\ncheckpoint_len=1\ncheckpoint=stale\n'
+  } > "$sequence"
+  result=$(NM_HOME="$dir/nm" FM_RACE_LOG="$log" bash -c '
+    . "$1"
+    original=$(declare -f fm_pr_ready_ci_log_events)
+    eval "${original/fm_pr_ready_ci_log_events/fm_pr_ready_ci_log_events_original}"
+    fm_pr_ready_ci_log_events() {
+      local data=$1
+      if [ ! -e "$FM_RACE_LOG.mutated" ]; then
+        : > "$FM_RACE_LOG.mutated"
+        printf "checks failed: unit\nCI checks passed\n" > "$FM_RACE_LOG"
+      fi
+      fm_pr_ready_ci_log_events_original "$data"
+    }
+    first=$(fm_pr_ready_ci_generation "$2" reset-snapshot run-reset-snapshot G)
+    second=$(fm_pr_ready_ci_generation "$2" reset-snapshot run-reset-snapshot GNG)
+    printf "%s:%s" "$first" "$second"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state")
+  [ "$result" = "0:1" ] \
+    || fail "reset snapshot persisted a checkpoint from different live bytes: $result"
+  pass "reset snapshots derive checkpoints from the bytes they parse"
+}
+
 test_ci_log_snapshot_excludes_concurrent_appends() {
   local dir state log result
   dir=$(make_case ci-log-snapshot); state="$dir/state"
@@ -1458,6 +1491,7 @@ test_sweep_cursor_advances_past_recent_task
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_concurrent_ci_rewrite_is_not_persisted_as_baseline
 test_checkpoint_race_discards_tentative_relapse_state
+test_reset_snapshot_checkpoint_matches_parsed_bytes
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
 test_ci_log_long_partial_line_preserves_failure
