@@ -694,6 +694,45 @@ SH
   pass "readiness sweep is incremental when a signal arrives mid-scan"
 }
 
+test_sweep_cursor_advances_past_recent_task() {
+  local dir state fakebin out pid id calls
+  dir=$(make_case sweep-cursor-fairness); state="$dir/state"; fakebin="$dir/fakebin"
+  for id in cursor-a cursor-b cursor-c; do make_task "$dir" "$id" off; done
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "${FM_FAKE_CALLS:?}"
+printf 'state: working · source: run-step · ci running\n'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  printf 'cursor-a\n' > "$state/.pr-ready-sweep-cursor"
+  touch "$state/.last-pr-ready-cursor-a"
+  printf 'blocked: first generation\n' > "$state/unrelated.status"
+  out="$dir/first.out"
+  FM_FAKE_CALLS="$dir/calls" PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=30 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "first cursor generation did not wake"; }
+  [ "$(sed -n '1p' "$dir/calls")" = cursor-b ] || fail "first cursor generation did not select cursor-b"
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2>&1 \
+    || fail "wake drain failed after first cursor generation"
+
+  rm -f "$state/.last-pr-ready-cursor-a"
+  touch "$state/.last-pr-ready-cursor-b"
+  printf 'blocked: second generation\n' > "$state/unrelated.status"
+  out="$dir/second.out"
+  FM_FAKE_CALLS="$dir/calls" PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=30 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "second cursor generation did not wake"; }
+  calls=$(tail -n 1 "$dir/calls")
+  [ "$calls" = cursor-c ] || fail "recent cursor task starved cursor-c in favor of $calls"
+  pass "readiness sweep cursor advances past recently scanned tasks"
+}
+
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation() {
   local dir state fakebin first recovered repeated unchanged log
   dir=$(make_case between-scan-relapse); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1166,6 +1205,7 @@ test_transient_git_identity_failure_preserves_marker
 test_signal_cannot_starve_pr_ready_sweep
 test_pending_signal_bounds_pr_ready_sweep_work
 test_signal_arriving_during_sweep_has_incremental_latency
+test_sweep_cursor_advances_past_recent_task
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines

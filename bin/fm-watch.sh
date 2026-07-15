@@ -311,7 +311,7 @@ EOF
 }
 
 pr_ready_sweep() {  # [pending-signal-records]
-  local pending=${1:-} w task windows cursor candidate fallback seen_cursor
+  local pending=${1:-} w task windows cursor candidate fallback seen_cursor is_cursor
   windows=$(recorded_windows)
   cursor=$(cat "$STATE/.pr-ready-sweep-cursor" 2>/dev/null || true)
   seen_cursor=0
@@ -319,11 +319,12 @@ pr_ready_sweep() {  # [pending-signal-records]
   while IFS= read -r w; do
     task=$(window_to_task "$w" "$STATE")
     [ -n "$task" ] || continue
+    is_cursor=0
+    if [ "$task" = "$cursor" ]; then seen_cursor=1; is_cursor=1; fi
     pending_status_reports_ready "$pending" "$task" && continue
     [ "$(age_of "$(fm_pr_ready_scan_path "$STATE" "$task")")" -ge "$PR_READY_SCAN_INTERVAL" ] || continue
     [ -n "$fallback" ] || fallback=$w
-    if [ "$task" = "$cursor" ]; then seen_cursor=1; continue; fi
-    if [ "$seen_cursor" -eq 1 ]; then candidate=$w; break; fi
+    if [ "$seen_cursor" -eq 1 ] && [ "$is_cursor" -eq 0 ]; then candidate=$w; break; fi
   done <<EOF
 $windows
 EOF
