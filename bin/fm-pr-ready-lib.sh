@@ -159,6 +159,25 @@ fm_pr_ready_now_ms() {
   fi
 }
 
+fm_pr_ready_file_ms() {  # <path>
+  local seconds value fraction
+  if [ "$(uname)" = Darwin ]; then
+    value=$(stat -f %Fm "$1" 2>/dev/null) || return 1
+    seconds=${value%%.*}
+    fraction=${value#*.}000
+  else
+    seconds=$(stat -c %Y "$1" 2>/dev/null) || return 1
+    value=$(stat -c %y "$1" 2>/dev/null) || return 1
+    case "$value" in *.*) fraction=${value#*.}; fraction=${fraction%% *}000 ;; *) fraction=000 ;; esac
+  fi
+  case "$seconds:$fraction" in *[!0-9:]*|:*) return 1 ;; esac
+  printf '%s%s' "$seconds" "${fraction:0:3}"
+}
+
+fm_pr_ready_status_event_ms() {  # <state> <task-id>
+  fm_pr_ready_file_ms "$1/$2.status" 2>/dev/null || fm_pr_ready_now_ms
+}
+
 fm_pr_ready_run_ms() {  # <run-id>
   local value=0 chars char digit i
   chars=${1%%-*}
@@ -226,8 +245,8 @@ fm_pr_ready_identity_relation() {  # <prior> <current> [<observed-ms>]
   fi
 }
 
-fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-line>
-  local path tmp wt branch head authority run
+fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-line> [<event-ms>]
+  local path tmp wt branch head authority run observed_ms
   path=$(fm_pr_ready_status_surfaced_path "$1" "$2")
   tmp="$path.tmp.${BASHPID:-$$}"
   wt=$(fm_pr_ready_meta_value "$3" worktree)
@@ -240,8 +259,9 @@ fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-lin
       run=${authority%%|*}
       ;;
   esac
+  observed_ms=${5:-$(fm_pr_ready_status_event_ms "$1" "$2")}
   {
-    printf 'observed_ms=%s\n' "$(fm_pr_ready_now_ms)"
+    printf 'observed_ms=%s\n' "$observed_ms"
     printf 'branch=%s\n' "$branch"
     printf 'head=%s\n' "$head"
     printf 'run=%s\n' "${run:-}"
@@ -364,7 +384,7 @@ fm_pr_ready_transition() {  # <state> <task-id>
 }
 
 fm_pr_ready_seed_status_signal() {  # <state> <task-id>
-  local state=$1 id=$2 meta kind mode marker line verdict record ready_id ready_identity identity
+  local state=$1 id=$2 meta kind mode marker superseded surfaced line verdict identity relation event_ms
   meta="$state/$id.meta"
   [ -e "$meta" ] || return 1
   kind=$(fm_pr_ready_meta_value "$meta" kind)
@@ -374,6 +394,9 @@ fm_pr_ready_seed_status_signal() {  # <state> <task-id>
   [ -n "$mode" ] || mode=no-mistakes
   [ "$mode" = no-mistakes ] || return 1
   marker=$(fm_pr_ready_marker_path "$state" "$id")
+  superseded=$(fm_pr_ready_superseded_path "$state" "$id")
+  surfaced=$(fm_pr_ready_status_surfaced_path "$state" "$id")
+  event_ms=$(fm_pr_ready_status_event_ms "$state" "$id")
   line=$(FM_STATE_OVERRIDE="$state" "$FM_PR_READY_STATE_BIN" "$id" 2>/dev/null | head -1) || true
   verdict=$(fm_pr_ready_verdict "$line")
   case "$verdict" in
@@ -382,22 +405,21 @@ fm_pr_ready_seed_status_signal() {  # <state> <task-id>
       return 1
       ;;
     ready)
-      record=$(fm_pr_ready_transition "$state" "$id" || true)
-      if [ -n "$record" ]; then
-        IFS=$'\t' read -r ready_id ready_identity _ <<< "$record"
-        [ "$ready_id" = "$id" ] || return 1
-        fm_pr_ready_commit "$state" "$id" "$ready_identity"
-      elif [ ! -e "$marker" ]; then
-        fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line"
+      [ ! -e "$superseded" ] || return 1
+      identity=$(fm_pr_ready_identity "$meta" "$line") || {
+        fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms"
+        return 0
+      }
+      fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms" || return 1
+      relation=$(fm_pr_ready_surfaced_relation "$surfaced" "$identity")
+      if [ "$relation" = upgrade ]; then
+        fm_pr_ready_commit "$state" "$id" "$identity"
       fi
       return 0
       ;;
   esac
-  if identity=$(fm_pr_ready_identity "$meta" ''); then
-    fm_pr_ready_commit "$state" "$id" "$identity"
-  else
-    fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line"
-  fi
+  [ ! -e "$superseded" ] || return 1
+  fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms"
 }
 
 # Commit only after the caller durably enqueues the transition.

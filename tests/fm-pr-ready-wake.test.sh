@@ -18,6 +18,7 @@ COARSE_STATUS_READY_LINE='state: done · source: status-log · done: PR https://
 UNKNOWN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7'
 REARMED_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-8'
 FUTURE_RUN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: 7ZZZZZZZZZ'
+INTERVENING_RUN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: 01ARZ3NDEK'
 WORKING_LINE='state: working · source: run-step · ci running'
 FAILED_LINE='state: failed · source: run-step · run failed'
 PAUSED_GREEN_LINE='state: paused · source: status-log · awaiting upstream owner · checks green: PR ready for review (still monitoring for merge/close)'
@@ -214,6 +215,40 @@ test_pending_ready_status_preserves_authoritative_supersession() {
   recovered=$(next_ready "$state" "$fakebin" pending-supersession "$READY_LINE")
   [ -n "$recovered" ] || fail "green recovery after pending status supersession did not re-surface"
   pass "pending ready status preserves authoritative supersession and renewed green"
+}
+
+test_indeterminate_status_fallback_preserves_known_supersession() {
+  local dir state fakebin first recovered superseded
+  dir=$(make_case indeterminate-status-supersession); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" stale-status off
+  first=$(next_ready "$state" "$fakebin" stale-status "$READY_LINE")
+  commit_record "$state" "$first"
+  next_ready "$state" "$fakebin" stale-status "$WORKING_LINE" >/dev/null
+  superseded="$state/.pr-ready-superseded-stale-status"
+  [ -s "$superseded" ] || fail "authoritative relapse did not persist supersession"
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/stale-status.status"
+  FM_FAKE_CREW_STATE='' FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    fm_pr_ready_seed_status_signal "$state" stale-status
+  [ -s "$superseded" ] || fail "indeterminate stale status cleared known supersession"
+  [ ! -e "$state/.pr-ready-stale-status" ] || fail "indeterminate stale status restored a superseded marker"
+  recovered=$(next_ready "$state" "$fakebin" stale-status "$READY_LINE")
+  [ -n "$recovered" ] || fail "stale status suppressed green after known supersession"
+  pass "indeterminate status fallback preserves authoritative supersession"
+}
+
+test_status_fallback_uses_event_time_for_intervening_run() {
+  local dir state fakebin recovered
+  dir=$(make_case status-event-time); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" event-time off
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/event-time.status"
+  touch -t 201607300000.00 "$state/event-time.status"
+  FM_FAKE_CREW_STATE='' FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    fm_pr_ready_seed_status_signal "$state" event-time
+  [ -s "$state/.pr-ready-status-surfaced-event-time" ] \
+    || fail "status fallback did not persist event-time correlation"
+  recovered=$(next_ready "$state" "$fakebin" event-time "$INTERVENING_RUN_READY_LINE")
+  [ -n "$recovered" ] || fail "processing-time fallback hid a run started after the status event"
+  pass "status fallback anchors run correlation to the status event"
 }
 
 test_done_status_dedupes_through_transient_identity_failures() {
@@ -604,6 +639,8 @@ test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
 test_pending_ready_status_preserves_authoritative_supersession
+test_indeterminate_status_fallback_preserves_known_supersession
+test_status_fallback_uses_event_time_for_intervening_run
 test_done_status_dedupes_through_transient_identity_failures
 test_coarse_status_refines_to_authoritative_baseline
 test_identity_refinement_relation_matrix
