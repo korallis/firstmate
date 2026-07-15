@@ -598,7 +598,6 @@ fm_pr_ready_seed_status_signal() {  # <state> <task-id>
       return 1
       ;;
     ready)
-      [ ! -e "$superseded" ] || return 1
       identity=$(fm_pr_ready_identity "$meta" "$line" "$state" "$id") || {
         [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms"
         return 0

@@ -288,6 +288,26 @@ test_pending_ready_status_preserves_authoritative_supersession() {
   pass "pending ready status preserves authoritative supersession and renewed green"
 }
 
+test_recovery_status_consumes_authoritative_supersession() {
+  local dir state fakebin first duplicate superseded
+  dir=$(make_case recovery-status-supersession); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" recovery-status off
+  first=$(next_ready "$state" "$fakebin" recovery-status "$READY_LINE")
+  commit_record "$state" "$first"
+  next_ready "$state" "$fakebin" recovery-status "$WORKING_LINE" >/dev/null
+  superseded="$state/.pr-ready-superseded-recovery-status"
+  [ -s "$superseded" ] || fail "authoritative relapse did not persist supersession"
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/recovery-status.status"
+  FM_FAKE_CREW_STATE="$READY_LINE" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    fm_pr_ready_seed_status_signal "$state" recovery-status
+  [ -s "$state/.pr-ready-recovery-status" ] \
+    || fail "recovery status did not commit authoritative readiness"
+  [ ! -e "$superseded" ] || fail "recovery status left supersession active"
+  duplicate=$(next_ready "$state" "$fakebin" recovery-status "$ALT_READY_LINE")
+  [ -z "$duplicate" ] || fail "next watcher generation duplicated recovery readiness"
+  pass "recovery status consumes supersession before the next watcher generation"
+}
+
 test_indeterminate_status_fallback_preserves_known_supersession() {
   local dir state fakebin first recovered superseded
   dir=$(make_case indeterminate-status-supersession); state="$dir/state"; fakebin="$dir/fakebin"
@@ -881,6 +901,7 @@ test_ready_status_snapshot_reconciles_newer_grace_status
 test_resolved_status_preserves_ready_snapshot
 test_authoritative_status_ready_survives_event_git_failure
 test_pending_ready_status_preserves_authoritative_supersession
+test_recovery_status_consumes_authoritative_supersession
 test_indeterminate_status_fallback_preserves_known_supersession
 test_status_fallback_uses_event_time_for_intervening_run
 test_done_status_dedupes_through_transient_state_failure
