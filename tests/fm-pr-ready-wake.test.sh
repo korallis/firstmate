@@ -187,6 +187,34 @@ test_done_status_seeds_next_generation_dedupe() {
   pass "done/checks-green signal suppresses duplicate readiness in the next watcher generation"
 }
 
+test_pending_ready_status_preserves_authoritative_supersession() {
+  local dir state fakebin first out pid recovered
+  dir=$(make_case pending-status-supersession); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" pending-supersession off
+  first=$(next_ready "$state" "$fakebin" pending-supersession "$READY_LINE")
+  commit_record "$state" "$first"
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/pending-supersession.status"
+  printf 'Working...\n' > "$dir/pane"
+  out="$dir/watch.out"
+  FM_FAKE_CREW_STATE="$WORKING_LINE" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 50 || { reap "$pid"; fail "pending done status did not wake"; }
+  grep -F 'signal:' "$out" >/dev/null || fail "pending done status missed its signal wake"
+  [ ! -e "$state/.pr-ready-pending-supersession" ] \
+    || fail "pending done status preserved a marker superseded by authoritative working state"
+  [ -s "$state/.pr-ready-superseded-pending-supersession" ] \
+    || fail "pending done status did not persist authoritative supersession"
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2>&1 \
+    || fail "wake drain failed after pending done status"
+  recovered=$(next_ready "$state" "$fakebin" pending-supersession "$READY_LINE")
+  [ -n "$recovered" ] || fail "green recovery after pending status supersession did not re-surface"
+  pass "pending ready status preserves authoritative supersession and renewed green"
+}
+
 test_done_status_dedupes_through_transient_identity_failures() {
   local dir state fakebin first_out second_out pid
   dir=$(make_case done-status-transient); state="$dir/state"; fakebin="$dir/fakebin"
@@ -533,6 +561,7 @@ test_background_ci_fixer_wakes_before_stale_status
 test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
+test_pending_ready_status_preserves_authoritative_supersession
 test_done_status_dedupes_through_transient_identity_failures
 test_coarse_status_refines_to_authoritative_baseline
 test_identity_refinement_relation_matrix

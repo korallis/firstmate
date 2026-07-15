@@ -188,6 +188,17 @@ fm_pr_ready_mark_superseded() {  # <state> <task-id> <prior-identity>
   printf '%s\t%s\n' "$observed_at" "$3" > "$tmp" && mv -f "$tmp" "$path"
 }
 
+fm_pr_ready_record_supersession() {  # <state> <task-id>
+  local state=$1 id=$2 marker prior
+  marker=$(fm_pr_ready_marker_path "$state" "$id")
+  prior=$(cat "$marker" 2>/dev/null || true)
+  if [ -n "$prior" ]; then
+    fm_pr_ready_mark_superseded "$state" "$id" "$prior" || return 1
+    rm -f "$marker"
+  fi
+  rm -f "$(fm_pr_ready_status_surfaced_path "$state" "$id")"
+}
+
 fm_pr_ready_status_reports_ready() {  # <status-line>
   local line=$1 verb
   verb=${line%%:*}
@@ -228,12 +239,7 @@ fm_pr_ready_transition() {  # <state> <task-id>
   verdict=$(fm_pr_ready_verdict "$line")
   case "$verdict" in
     supersede)
-      prior=$(cat "$marker" 2>/dev/null || true)
-      if [ -n "$prior" ]; then
-        fm_pr_ready_mark_superseded "$state" "$id" "$prior" || return 1
-        rm -f "$marker"
-      fi
-      rm -f "$surfaced"
+      fm_pr_ready_record_supersession "$state" "$id" || return 1
       return 1
       ;;
     ready)
@@ -276,7 +282,10 @@ fm_pr_ready_seed_status_signal() {  # <state> <task-id>
   line=$(FM_STATE_OVERRIDE="$state" "$FM_PR_READY_STATE_BIN" "$id" 2>/dev/null | head -1) || true
   verdict=$(fm_pr_ready_verdict "$line")
   case "$verdict" in
-    supersede) return 1 ;;
+    supersede)
+      fm_pr_ready_record_supersession "$state" "$id" || return 1
+      return 1
+      ;;
     ready)
       record=$(fm_pr_ready_transition "$state" "$id" || true)
       if [ -n "$record" ]; then
