@@ -460,15 +460,32 @@ fm_pr_ready_record_supersession() {  # <state> <task-id>
   rm -f "$(fm_pr_ready_status_surfaced_path "$state" "$id")"
 }
 
-fm_pr_ready_status_reports_ready() {  # <status-line>
-  local line=$1 verb
-  verb=${line%%:*}
+fm_pr_ready_status_verb() {  # <status-line>
+  local verb
+  verb=${1%%:*}
   verb=${verb%%\[key=*}
   verb=${verb#"${verb%%[![:space:]]*}"}
   verb=${verb%"${verb##*[![:space:]]}"}
-  [ "$verb" = "done" ] || return 1
+  printf '%s' "$verb"
+}
+
+fm_pr_ready_status_reports_ready() {  # <status-line>
+  local line=$1
+  [ "$(fm_pr_ready_status_verb "$line")" = "done" ] || return 1
   case "$line" in
     *PR*"checks green"*|*"checks green"*PR*) return 0 ;;
+  esac
+  return 1
+}
+
+fm_pr_ready_status_reports_nonready() {  # <status-line>
+  local line=$1
+  case "$(fm_pr_ready_status_verb "$line")" in
+    working|needs-decision|blocked|paused|failed) return 0 ;;
+    done)
+      if fm_pr_ready_status_reports_ready "$line"; then return 1; fi
+      return 0
+      ;;
   esac
   return 1
 }
@@ -486,6 +503,7 @@ fm_pr_ready_snapshot_status_signal() {  # <state> <task-id>
     return
   fi
   [ -e "$surfaced" ] || return 1
+  fm_pr_ready_status_reports_nonready "$line" || return 1
   status_sig=$(fm_pr_ready_status_signature "$state" "$id" || true)
   observed_sig=$(fm_pr_ready_meta_value "$surfaced" status_sig)
   if [ -n "$status_sig" ] && [ -n "$observed_sig" ]; then
@@ -560,7 +578,7 @@ fm_pr_ready_transition() {  # <state> <task-id>
 }
 
 fm_pr_ready_seed_status_signal() {  # <state> <task-id>
-  local state=$1 id=$2 meta kind mode marker superseded surfaced line verdict identity relation event_ms
+  local state=$1 id=$2 meta kind mode superseded surfaced line verdict identity event_ms
   meta="$state/$id.meta"
   [ -e "$meta" ] || return 1
   kind=$(fm_pr_ready_meta_value "$meta" kind)
@@ -569,7 +587,6 @@ fm_pr_ready_seed_status_signal() {  # <state> <task-id>
   mode=$(fm_pr_ready_meta_value "$meta" mode)
   [ -n "$mode" ] || mode=no-mistakes
   [ "$mode" = no-mistakes ] || return 1
-  marker=$(fm_pr_ready_marker_path "$state" "$id")
   superseded=$(fm_pr_ready_superseded_path "$state" "$id")
   surfaced=$(fm_pr_ready_status_surfaced_path "$state" "$id")
   event_ms=$(fm_pr_ready_status_event_ms "$state" "$id")
@@ -586,11 +603,7 @@ fm_pr_ready_seed_status_signal() {  # <state> <task-id>
         [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms"
         return 0
       }
-      [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms" || return 1
-      relation=$(fm_pr_ready_surfaced_relation "$surfaced" "$identity")
-      if [ "$relation" = upgrade ]; then
-        fm_pr_ready_commit "$state" "$id" "$identity"
-      fi
+      fm_pr_ready_commit "$state" "$id" "$identity"
       return 0
       ;;
   esac

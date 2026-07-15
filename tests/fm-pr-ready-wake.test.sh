@@ -221,6 +221,45 @@ test_ready_status_snapshot_reconciles_newer_grace_status() {
   pass "newer grace status supersedes a snapshotted checks-green signal"
 }
 
+test_resolved_status_preserves_ready_snapshot() {
+  local dir state fakebin duplicate
+  dir=$(make_case resolved-status-snapshot); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" resolved-status off
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/resolved-status.status"
+  fm_pr_ready_snapshot_status_signal "$state" resolved-status
+  [ -s "$state/.pr-ready-status-surfaced-resolved-status" ] \
+    || fail "checks-green status was not snapshotted"
+  printf 'resolved [key=review]: captain decision recorded\n' >> "$state/resolved-status.status"
+  fm_pr_ready_snapshot_status_signal "$state" resolved-status || true
+  [ -s "$state/.pr-ready-status-surfaced-resolved-status" ] \
+    || fail "decision resolution cleared readiness fallback"
+  [ ! -e "$state/.pr-ready-superseded-resolved-status" ] \
+    || fail "decision resolution falsely superseded readiness"
+  FM_FAKE_CREW_STATE="$READY_LINE" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    fm_pr_ready_seed_status_signal "$state" resolved-status
+  duplicate=$(next_ready "$state" "$fakebin" resolved-status "$ALT_READY_LINE")
+  [ -z "$duplicate" ] || fail "decision resolution caused duplicate readiness"
+  pass "decision-only resolved status preserves readiness deduplication"
+}
+
+test_authoritative_status_ready_survives_event_git_failure() {
+  local dir state fakebin duplicate
+  dir=$(make_case authoritative-status-git-failure); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" authoritative-status off
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/authoritative-status.status"
+  FM_FAKE_CREW_STATE="$READY_LINE" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    bash -c '
+      . "$1"
+      fm_pr_ready_head_at_ms() { return 1; }
+      fm_pr_ready_seed_status_signal "$2" authoritative-status
+    ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state"
+  [ -s "$state/.pr-ready-authoritative-status" ] \
+    || fail "authoritative readiness was not committed when event git history was unavailable"
+  duplicate=$(next_ready "$state" "$fakebin" authoritative-status "$ALT_READY_LINE")
+  [ -z "$duplicate" ] || fail "event git history failure caused duplicate readiness"
+  pass "authoritative status readiness deduplicates without event git history"
+}
+
 test_pending_ready_status_preserves_authoritative_supersession() {
   local dir state fakebin first out pid recovered
   dir=$(make_case pending-status-supersession); state="$dir/state"; fakebin="$dir/fakebin"
@@ -839,6 +878,8 @@ test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
 test_ready_status_snapshot_reconciles_newer_grace_status
+test_resolved_status_preserves_ready_snapshot
+test_authoritative_status_ready_survives_event_git_failure
 test_pending_ready_status_preserves_authoritative_supersession
 test_indeterminate_status_fallback_preserves_known_supersession
 test_status_fallback_uses_event_time_for_intervening_run
