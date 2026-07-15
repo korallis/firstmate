@@ -306,13 +306,53 @@ EOF
 }
 
 pr_ready_sweep() {  # [pending-signal-records]
-  local pending=${1:-} w task
+  local pending=${1:-} w task windows cursor candidate fallback seen_cursor
+  windows=$(recorded_windows)
+  if [ -z "$pending" ]; then
+    while IFS= read -r w; do
+      task=$(window_to_task "$w" "$STATE")
+      [ -n "$task" ] || continue
+      pending_status_reports_ready "$pending" "$task" && continue
+      pr_ready_recheck "$w"
+    done <<EOF
+$windows
+EOF
+    return
+  fi
+
+  cursor=$(cat "$STATE/.pr-ready-sweep-cursor" 2>/dev/null || true)
+  seen_cursor=0
+  [ -z "$cursor" ] && seen_cursor=1
   while IFS= read -r w; do
     task=$(window_to_task "$w" "$STATE")
     [ -n "$task" ] || continue
+    if [ "$task" = "$cursor" ]; then seen_cursor=1; continue; fi
     pending_status_reports_ready "$pending" "$task" && continue
-    pr_ready_recheck "$w"
-  done < <(recorded_windows)
+    [ "$(age_of "$(fm_pr_ready_scan_path "$STATE" "$task")")" -ge "$PR_READY_SCAN_INTERVAL" ] || continue
+    [ -n "$fallback" ] || fallback=$w
+    if [ "$seen_cursor" -eq 1 ]; then candidate=$w; break; fi
+  done <<EOF
+$windows
+EOF
+  [ -n "$candidate" ] || candidate=$fallback
+  [ -n "$candidate" ] || return 0
+  task=$(window_to_task "$candidate" "$STATE")
+  printf '%s\n' "$task" > "$STATE/.pr-ready-sweep-cursor"
+  pr_ready_recheck "$candidate"
+}
+
+snapshot_pr_ready_status_signals() {  # <pending-signal-records>
+  local pending=$1 sf sig f line task
+  while IFS=$(printf '\t') read -r sf sig f; do
+    [ -n "$sf" ] || continue
+    case "$f" in "$STATE"/*.status) ;; *) continue ;; esac
+    line=$(last_status_line "$f")
+    fm_pr_ready_status_reports_ready "$line" || continue
+    task=$(basename "$f" .status)
+    fm_pr_ready_snapshot_status_signal "$STATE" "$task" || true
+  done <<EOF
+$pending
+EOF
 }
 
 # A current done/checks-green status signal already makes readiness actionable.
@@ -722,8 +762,10 @@ while :; do
   # signature for an already-pending file (last write wins below).
   pending=$(scan_signals)
   if [ -n "$pending" ]; then
+    snapshot_pr_ready_status_signals "$pending"
     sleep "$SIGNAL_GRACE"
     pending=$(printf '%s\n%s' "$pending" "$(scan_signals)")
+    snapshot_pr_ready_status_signals "$pending"
   fi
 
   # Run the bounded authoritative sweep before any signal-triggered exit so a

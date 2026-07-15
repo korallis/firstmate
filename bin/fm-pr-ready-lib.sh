@@ -212,7 +212,7 @@ fm_pr_ready_run_after() {  # <run-id> <observed-ms>
 
 fm_pr_ready_identity_relation() {  # <prior> <current> [<observed-ms>]
   local prior=$1 current=$2 observed_ms=${3:-} prior_rest current_rest prior_branch current_branch
-  local prior_head current_head prior_components current_components prior_run current_run
+  local prior_head current_head prior_components current_components prior_run current_run prior_detail current_detail
   if [ "$prior" = "$current" ]; then
     printf 'same'
     return
@@ -233,11 +233,16 @@ fm_pr_ready_identity_relation() {  # <prior> <current> [<observed-ms>]
   case "$current_rest" in *'|'*) current_components=${current_rest#*|} ;; *) current_components= ;; esac
   prior_run=$(fm_pr_ready_identity_component "$prior_components" 'run=' || true)
   current_run=$(fm_pr_ready_identity_component "$current_components" 'run=' || true)
+  prior_detail=$(fm_pr_ready_identity_component "$prior_components" 'detail=' || true)
+  current_detail=$(fm_pr_ready_identity_component "$current_components" 'detail=' || true)
   if [ -n "$prior_run" ] && [ -n "$current_run" ] && [ "$prior_run" != "$current_run" ]; then
     printf 'different'
   elif [ -z "$prior_run" ] && [ -n "$current_run" ] && [ -n "$observed_ms" ] \
     && fm_pr_ready_run_after "$current_run" "$observed_ms"; then
     printf 'different'
+  elif [ -n "$prior_detail" ] && [ -n "$current_detail" ] \
+    && [ "$prior_detail" != "$current_detail" ]; then
+    if [ "$current_detail" = baseline ]; then printf 'same'; else printf 'different'; fi
   elif fm_pr_ready_components_subset "$current_components" "$prior_components"; then
     printf 'same'
   else
@@ -245,13 +250,21 @@ fm_pr_ready_identity_relation() {  # <prior> <current> [<observed-ms>]
   fi
 }
 
+fm_pr_ready_head_at_ms() {  # <worktree> <event-ms>
+  local seconds
+  seconds=$((${2:-0} / 1000))
+  [ "$seconds" -gt 0 ] || return 1
+  git -C "$1" rev-parse --verify "HEAD@{$seconds}" 2>/dev/null
+}
+
 fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-line> [<event-ms>]
   local path tmp wt branch head authority run observed_ms
   path=$(fm_pr_ready_status_surfaced_path "$1" "$2")
   tmp="$path.tmp.${BASHPID:-$$}"
   wt=$(fm_pr_ready_meta_value "$3" worktree)
+  observed_ms=${5:-$(fm_pr_ready_status_event_ms "$1" "$2")}
   branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-  head=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null || true)
+  head=$(fm_pr_ready_head_at_ms "$wt" "$observed_ms" || true)
   case "$4" in
     *'run-identity: '*)
       authority=${4#*run-identity: }
@@ -259,7 +272,6 @@ fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-lin
       run=${authority%%|*}
       ;;
   esac
-  observed_ms=${5:-$(fm_pr_ready_status_event_ms "$1" "$2")}
   {
     printf 'observed_ms=%s\n' "$observed_ms"
     printf 'branch=%s\n' "$branch"
@@ -320,6 +332,18 @@ fm_pr_ready_status_reports_ready() {  # <status-line>
     *PR*"checks green"*|*"checks green"*PR*) return 0 ;;
   esac
   return 1
+}
+
+fm_pr_ready_snapshot_status_signal() {  # <state> <task-id>
+  local state=$1 id=$2 meta line surfaced
+  meta="$state/$id.meta"
+  [ -e "$meta" ] || return 1
+  line=$(grep -v '^[[:space:]]*$' "$state/$id.status" 2>/dev/null | tail -1)
+  fm_pr_ready_status_reports_ready "$line" || return 1
+  [ ! -e "$(fm_pr_ready_superseded_path "$state" "$id")" ] || return 1
+  surfaced=$(fm_pr_ready_status_surfaced_path "$state" "$id")
+  [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "" \
+    "$(fm_pr_ready_status_event_ms "$state" "$id")"
 }
 
 fm_pr_ready_reason() {  # <task-id> <yolo>
@@ -407,10 +431,10 @@ fm_pr_ready_seed_status_signal() {  # <state> <task-id>
     ready)
       [ ! -e "$superseded" ] || return 1
       identity=$(fm_pr_ready_identity "$meta" "$line") || {
-        fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms"
+        [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms"
         return 0
       }
-      fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms" || return 1
+      [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms" || return 1
       relation=$(fm_pr_ready_surfaced_relation "$surfaced" "$identity")
       if [ "$relation" = upgrade ]; then
         fm_pr_ready_commit "$state" "$id" "$identity"
@@ -419,7 +443,7 @@ fm_pr_ready_seed_status_signal() {  # <state> <task-id>
       ;;
   esac
   [ ! -e "$superseded" ] || return 1
-  fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms"
+  [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "$line" "$event_ms"
 }
 
 # Commit only after the caller durably enqueues the transition.

@@ -322,7 +322,8 @@ fm/task|head-1|detail=baseline	fm/task|head-1|run=run-7|detail=baseline	upgrade
 fm/task|head-1|run=run-7|detail=baseline	fm/task|head-1|detail=baseline|run=run-7	same
 fm/task|head-1|run=run-7|detail=baseline	fm/task|head-1|run=run-7	same
 fm/task|head-1|run=run-7	fm/task|head-1|run=run-7|detail=relapse-42:1	upgrade
-fm/task|head-1|run=run-7|detail=baseline	fm/task|head-1|run=run-7|detail=relapse-42:1	upgrade
+fm/task|head-1|run=run-7|detail=baseline	fm/task|head-1|run=run-7|detail=relapse-42:1	different
+fm/task|head-1|run=run-7|detail=relapse-42:1	fm/task|head-1|run=run-7|detail=baseline	same
 fm/task|head-1|run=run-7|detail=baseline	fm/task|head-1|run=run-8|detail=baseline	different
 fm/task|head-1|run=run-7|detail=baseline	fm/other|head-1|run=run-7|detail=baseline	different
 fm/task|head-1|run=run-7|detail=baseline	fm/task|head-2|run=run-7|detail=baseline	different
@@ -350,6 +351,26 @@ test_coarse_marker_distinguishes_later_run() {
   rearmed=$(next_ready "$state" "$fakebin" coarse-later-run "$FUTURE_RUN_READY_LINE")
   [ -n "$rearmed" ] || fail "coarse readiness marker hid a later authoritative run"
   pass "coarse readiness distinguishes a later authoritative run from benign refinement"
+}
+
+test_status_fallback_anchors_head_to_event() {
+  local dir state fakebin old_head surfaced recovered
+  dir=$(make_case status-fallback-event-head); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" event-head off
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/event-head.status"
+  old_head=$(git -C "$dir/event-head-wt" rev-parse HEAD)
+  fm_pr_ready_snapshot_status_signal "$state" event-head
+  printf 'rearmed\n' > "$dir/event-head-wt/rearmed"
+  git -C "$dir/event-head-wt" add rearmed
+  git -C "$dir/event-head-wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm rearmed
+  FM_FAKE_CREW_STATE='' FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    fm_pr_ready_seed_status_signal "$state" event-head
+  surfaced="$state/.pr-ready-status-surfaced-event-head"
+  [ "$(fm_pr_ready_meta_value "$surfaced" head)" = "$old_head" ] \
+    || fail "status fallback sampled the post-event HEAD"
+  recovered=$(next_ready "$state" "$fakebin" event-head "$READY_LINE")
+  [ -n "$recovered" ] || fail "status fallback suppressed green on the post-event HEAD"
+  pass "status fallback anchors HEAD identity to the status event"
 }
 
 test_status_fallback_distinguishes_rearm_and_head_change() {
@@ -381,7 +402,7 @@ test_status_fallback_distinguishes_rearm_and_head_change() {
 }
 
 test_unknown_generation_upgrades_without_duplicate() {
-  local dir state fakebin first known recovered marker
+  local dir state fakebin first known marker
   dir=$(make_case unknown-generation); state="$dir/state"; fakebin="$dir/fakebin"
   make_task "$dir" unknown-generation off
   first=$(next_ready "$state" "$fakebin" unknown-generation "$UNKNOWN_READY_LINE")
@@ -391,8 +412,6 @@ test_unknown_generation_upgrades_without_duplicate() {
   [ -z "$known" ] || fail "newly readable CI generation duplicated readiness"
   marker=$(cat "$state/.pr-ready-unknown-generation")
   case "$marker" in *'run=run-7|detail=baseline') ;; *) fail "newly readable CI generation did not upgrade the marker" ;; esac
-  recovered=$(next_ready "$state" "$fakebin" unknown-generation "$RECOVERED_READY_LINE")
-  [ -z "$recovered" ] || fail "newly readable same-HEAD history duplicated readiness"
   pass "unknown CI generation anchors and refines without duplicate wake"
 }
 
@@ -468,15 +487,41 @@ test_signal_cannot_starve_pr_ready_sweep() {
   pass "actionable signals cannot starve bounded PR-ready scans"
 }
 
-test_unobserved_relapse_history_refines_without_duplicate() {
+test_pending_signal_bounds_pr_ready_sweep_work() {
+  local dir state fakebin out pid started elapsed id
+  dir=$(make_case signal-sweep-bound); state="$dir/state"; fakebin="$dir/fakebin"
+  for id in slow-one slow-two slow-three; do make_task "$dir" "$id" off; done
+  printf 'blocked: unrelated decision required\n' > "$state/unrelated.status"
+  printf 'Working...\n' > "$dir/pane"
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 1
+printf 'state: working · source: run-step · ci running\n'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  out="$dir/watch.out"
+  started=$(date +%s)
+  FM_FAKE_TMUX_CAPTURE="$dir/pane" PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 60 || { reap "$pid"; fail "pending signal did not wake after bounded sweep"; }
+  elapsed=$(( $(date +%s) - started ))
+  [ "$elapsed" -lt 4 ] || fail "pending signal waited for more than one task scan (${elapsed}s)"
+  grep -F 'signal:' "$out" >/dev/null || fail "pending actionable signal was not surfaced"
+  pass "pending signals bound the PR-ready sweep to one task read"
+}
+
+test_between_scan_relapse_generation_resurfaces() {
   local dir state fakebin first recovered
-  dir=$(make_case unobserved-relapse); state="$dir/state"; fakebin="$dir/fakebin"
-  make_task "$dir" unobserved-relapse off
-  first=$(next_ready "$state" "$fakebin" unobserved-relapse "$READY_LINE")
+  dir=$(make_case between-scan-relapse); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" between-scan-relapse off
+  first=$(next_ready "$state" "$fakebin" between-scan-relapse "$READY_LINE")
   commit_record "$state" "$first"
-  recovered=$(next_ready "$state" "$fakebin" unobserved-relapse "$RECOVERED_READY_LINE")
-  [ -z "$recovered" ] || fail "unobserved same-HEAD history emitted a duplicate"
-  pass "unobserved same-HEAD relapse history is benign refinement"
+  recovered=$(next_ready "$state" "$fakebin" between-scan-relapse "$RECOVERED_READY_LINE")
+  [ -n "$recovered" ] || fail "same-run between-scan relapse generation was suppressed"
+  pass "same-run between-scan relapse generation re-surfaces renewed green"
 }
 
 test_relapse_rearm_and_head_change_supersede_green() {
@@ -646,13 +691,15 @@ test_coarse_status_refines_to_authoritative_baseline
 test_identity_refinement_relation_matrix
 test_changed_run_identity_resurfaces_same_head
 test_coarse_marker_distinguishes_later_run
+test_status_fallback_anchors_head_to_event
 test_status_fallback_distinguishes_rearm_and_head_change
 test_unknown_generation_upgrades_without_duplicate
 test_hidden_preexisting_relapse_refines_without_duplicate
 test_observed_relapse_survives_watcher_restart
 test_transient_git_identity_failure_preserves_marker
 test_signal_cannot_starve_pr_ready_sweep
-test_unobserved_relapse_history_refines_without_duplicate
+test_pending_signal_bounds_pr_ready_sweep_work
+test_between_scan_relapse_generation_resurfaces
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
 test_changing_pane_failure_is_observed_by_task_scan
