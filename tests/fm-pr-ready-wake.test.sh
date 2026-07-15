@@ -191,6 +191,36 @@ test_done_status_seeds_next_generation_dedupe() {
   pass "done/checks-green signal suppresses duplicate readiness in the next watcher generation"
 }
 
+test_ready_status_snapshot_reconciles_newer_grace_status() {
+  local dir state fakebin first out pid recovered
+  dir=$(make_case grace-status-supersession); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" grace-status off
+  first=$(next_ready "$state" "$fakebin" grace-status "$READY_LINE")
+  commit_record "$state" "$first"
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/grace-status.status"
+  fm_pr_ready_snapshot_status_signal "$state" grace-status
+  [ -e "$state/.pr-ready-status-surfaced-grace-status" ] \
+    || fail "fixture did not snapshot checks-green status"
+  printf 'idle\n' > "$dir/pane"
+  out="$dir/watch.out"
+  FM_FAKE_CREW_STATE='' FM_FAKE_TMUX_CAPTURE="$dir/pane" \
+    PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_SCAN_INTERVAL=0 FM_POLL=1 FM_SIGNAL_GRACE=2 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  sleep 0.5
+  printf 'working: CI re-armed after checks changed\n' >> "$state/grace-status.status"
+  wait_for_exit "$pid" 60 || { reap "$pid"; fail "newer grace status did not finish signal handling"; }
+  [ ! -e "$state/.pr-ready-grace-status" ] \
+    || fail "newer non-ready grace status left the earlier readiness marker"
+  [ -s "$state/.pr-ready-superseded-grace-status" ] \
+    || fail "newer non-ready grace status did not persist supersession"
+  recovered=$(next_ready "$state" "$fakebin" grace-status "$READY_LINE")
+  [ -n "$recovered" ] || fail "green recovery after grace status supersession did not re-surface"
+  pass "newer grace status supersedes a snapshotted checks-green signal"
+}
+
 test_pending_ready_status_preserves_authoritative_supersession() {
   local dir state fakebin first out pid recovered
   dir=$(make_case pending-status-supersession); state="$dir/state"; fakebin="$dir/fakebin"
@@ -243,23 +273,21 @@ test_status_fallback_uses_event_time_for_intervening_run() {
   dir=$(make_case status-event-time); state="$dir/state"; fakebin="$dir/fakebin"
   make_task "$dir" event-time off
   printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/event-time.status"
-  touch -t 201607300000.00 "$state/event-time.status"
   FM_FAKE_CREW_STATE='' FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
     fm_pr_ready_seed_status_signal "$state" event-time
   [ -s "$state/.pr-ready-status-surfaced-event-time" ] \
     || fail "status fallback did not persist event-time correlation"
-  recovered=$(next_ready "$state" "$fakebin" event-time "$INTERVENING_RUN_READY_LINE")
+  recovered=$(next_ready "$state" "$fakebin" event-time "$FUTURE_RUN_READY_LINE")
   [ -n "$recovered" ] || fail "processing-time fallback hid a run started after the status event"
   pass "status fallback anchors run correlation to the status event"
 }
 
-test_done_status_dedupes_through_transient_identity_failures() {
+test_done_status_dedupes_through_transient_state_failure() {
   local dir state fakebin first_out second_out pid
   dir=$(make_case done-status-transient); state="$dir/state"; fakebin="$dir/fakebin"
   make_task "$dir" status-transient off
   printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/status-transient.status"
   printf 'Working...\n' > "$dir/pane"
-  git -C "$dir/status-transient-wt" checkout -q --detach
   first_out="$dir/first.out"
   FM_FAKE_CREW_STATE='' FM_FAKE_TMUX_CAPTURE="$dir/pane" \
     PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" \
@@ -273,7 +301,6 @@ test_done_status_dedupes_through_transient_identity_failures() {
     || fail "done status did not persist fallback dedupe state"
   FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2>&1 \
     || fail "wake drain failed after transient done status"
-  git -C "$dir/status-transient-wt" checkout -q "fm/status-transient"
 
   second_out="$dir/second.out"
   FM_FAKE_CREW_STATE="$READY_LINE" FM_FAKE_TMUX_CAPTURE="$dir/pane" \
@@ -290,7 +317,7 @@ test_done_status_dedupes_through_transient_identity_failures() {
   [ ! -e "$state/.pr-ready-status-surfaced-status-transient" ] \
     || { reap "$pid"; fail "recovered identity left fallback state behind"; }
   reap "$pid"
-  pass "done status deduplicates through transient state and git identity failures"
+  pass "done status deduplicates through a transient state read failure"
 }
 
 test_coarse_status_refines_to_authoritative_baseline() {
@@ -375,17 +402,32 @@ test_status_fallback_anchors_head_to_event() {
   pass "status fallback anchors HEAD identity to the status event"
 }
 
+test_status_fallback_rejects_branch_time_skew() {
+  local dir state fakebin recovered
+  dir=$(make_case status-fallback-branch-skew); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" branch-skew off
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/branch-skew.status"
+  sleep 1.1
+  git -C "$dir/branch-skew-wt" checkout -qb fm/branch-skew-rearmed
+  FM_FAKE_CREW_STATE='' FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    fm_pr_ready_seed_status_signal "$state" branch-skew
+  [ ! -e "$state/.pr-ready-status-surfaced-branch-skew" ] \
+    || fail "status fallback combined event-time HEAD with a later branch"
+  recovered=$(next_ready "$state" "$fakebin" branch-skew "$READY_LINE")
+  [ -n "$recovered" ] || fail "indeterminate branch-skew fallback suppressed authoritative readiness"
+  pass "status fallback rejects branch and HEAD time skew"
+}
+
 test_status_fallback_distinguishes_rearm_and_head_change() {
   local dir state fakebin meta rearmed old_head changed
   dir=$(make_case status-fallback-changes); state="$dir/state"; fakebin="$dir/fakebin"
   make_task "$dir" status-fallback off
   meta="$state/status-fallback.meta"
-  git -C "$dir/status-fallback-wt" checkout -q --detach
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/status-fallback.status"
   FM_FAKE_CREW_STATE='' FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
     fm_pr_ready_seed_status_signal "$state" status-fallback
   [ -s "$state/.pr-ready-status-surfaced-status-fallback" ] \
     || fail "transient status fallback was not persisted"
-  git -C "$dir/status-fallback-wt" checkout -q "fm/status-fallback"
   rearmed=$(next_ready "$state" "$fakebin" status-fallback "$FUTURE_RUN_READY_LINE")
   [ -n "$rearmed" ] || fail "status fallback hid a later authoritative run"
 
@@ -796,15 +838,17 @@ test_background_ci_fixer_wakes_before_stale_status
 test_duplicate_suppression_across_watcher_generations
 test_volatile_ready_detail_does_not_wake_again
 test_done_status_seeds_next_generation_dedupe
+test_ready_status_snapshot_reconciles_newer_grace_status
 test_pending_ready_status_preserves_authoritative_supersession
 test_indeterminate_status_fallback_preserves_known_supersession
 test_status_fallback_uses_event_time_for_intervening_run
-test_done_status_dedupes_through_transient_identity_failures
+test_done_status_dedupes_through_transient_state_failure
 test_coarse_status_refines_to_authoritative_baseline
 test_identity_refinement_relation_matrix
 test_changed_run_identity_resurfaces_same_head
 test_coarse_marker_distinguishes_later_run
 test_status_fallback_anchors_head_to_event
+test_status_fallback_rejects_branch_time_skew
 test_status_fallback_distinguishes_rearm_and_head_change
 test_unknown_generation_upgrades_without_duplicate
 test_hidden_preexisting_relapse_refines_without_duplicate

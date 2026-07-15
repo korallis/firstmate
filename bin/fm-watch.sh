@@ -335,12 +335,10 @@ EOF
 }
 
 snapshot_pr_ready_status_signals() {  # <pending-signal-records>
-  local pending=$1 sf sig f line task
+  local pending=$1 sf sig f task
   while IFS=$(printf '\t') read -r sf sig f; do
     [ -n "$sf" ] || continue
     case "$f" in "$STATE"/*.status) ;; *) continue ;; esac
-    line=$(last_status_line "$f")
-    fm_pr_ready_status_reports_ready "$line" || continue
     task=$(basename "$f" .status)
     fm_pr_ready_snapshot_status_signal "$STATE" "$task" || true
   done <<EOF

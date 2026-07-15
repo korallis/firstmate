@@ -304,6 +304,10 @@ fm_pr_ready_status_event_ms() {  # <state> <task-id>
   fm_pr_ready_file_ms "$1/$2.status" 2>/dev/null || fm_pr_ready_now_ms
 }
 
+fm_pr_ready_status_signature() {  # <state> <task-id>
+  cksum "$1/$2.status" 2>/dev/null | awk '{print $1 ":" $2}'
+}
+
 fm_pr_ready_run_ms() {  # <run-id>
   local value=0 chars char digit i
   chars=${1%%-*}
@@ -384,13 +388,21 @@ fm_pr_ready_head_at_ms() {  # <worktree> <event-ms>
 }
 
 fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-line> [<event-ms>]
-  local path tmp wt branch head authority run observed_ms
+  local path tmp wt branch head current_head head_path head_ref_ms authority run observed_ms status_sig
   path=$(fm_pr_ready_status_surfaced_path "$1" "$2")
   tmp="$path.tmp.${BASHPID:-$$}"
   wt=$(fm_pr_ready_meta_value "$3" worktree)
   observed_ms=${5:-$(fm_pr_ready_status_event_ms "$1" "$2")}
+  status_sig=$(fm_pr_ready_status_signature "$1" "$2" || true)
   branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  current_head=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null || true)
   head=$(fm_pr_ready_head_at_ms "$wt" "$observed_ms" || true)
+  [ -n "$head" ] && [ "$head" = "$current_head" ] || return 1
+  head_path=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null || true)
+  [ -n "$head_path" ] && head_path="$head_path/HEAD"
+  head_ref_ms=$(fm_pr_ready_file_ms "$head_path" 2>/dev/null || true)
+  case "$head_ref_ms:$observed_ms" in *[!0-9:]*|:*) return 1 ;; esac
+  [ "$head_ref_ms" -le "$observed_ms" ] || return 1
   case "$4" in
     *'run-identity: '*)
       authority=${4#*run-identity: }
@@ -400,6 +412,7 @@ fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-lin
   esac
   {
     printf 'observed_ms=%s\n' "$observed_ms"
+    printf 'status_sig=%s\n' "$status_sig"
     printf 'branch=%s\n' "$branch"
     printf 'head=%s\n' "$head"
     printf 'run=%s\n' "${run:-}"
@@ -461,15 +474,28 @@ fm_pr_ready_status_reports_ready() {  # <status-line>
 }
 
 fm_pr_ready_snapshot_status_signal() {  # <state> <task-id>
-  local state=$1 id=$2 meta line surfaced
+  local state=$1 id=$2 meta line surfaced event_ms observed_ms status_sig observed_sig
   meta="$state/$id.meta"
   [ -e "$meta" ] || return 1
   line=$(grep -v '^[[:space:]]*$' "$state/$id.status" 2>/dev/null | tail -1)
-  fm_pr_ready_status_reports_ready "$line" || return 1
-  [ ! -e "$(fm_pr_ready_superseded_path "$state" "$id")" ] || return 1
   surfaced=$(fm_pr_ready_status_surfaced_path "$state" "$id")
-  [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "" \
-    "$(fm_pr_ready_status_event_ms "$state" "$id")"
+  event_ms=$(fm_pr_ready_status_event_ms "$state" "$id")
+  if fm_pr_ready_status_reports_ready "$line"; then
+    [ ! -e "$(fm_pr_ready_superseded_path "$state" "$id")" ] || return 1
+    [ -e "$surfaced" ] || fm_pr_ready_mark_status_surfaced "$state" "$id" "$meta" "" "$event_ms"
+    return
+  fi
+  [ -e "$surfaced" ] || return 1
+  status_sig=$(fm_pr_ready_status_signature "$state" "$id" || true)
+  observed_sig=$(fm_pr_ready_meta_value "$surfaced" status_sig)
+  if [ -n "$status_sig" ] && [ -n "$observed_sig" ]; then
+    [ "$status_sig" != "$observed_sig" ] || return 1
+  else
+    observed_ms=$(fm_pr_ready_meta_value "$surfaced" observed_ms)
+    case "$event_ms:$observed_ms" in *[!0-9:]*|:*) return 1 ;; esac
+    [ "$event_ms" -gt "$observed_ms" ] || return 1
+  fi
+  fm_pr_ready_record_supersession "$state" "$id"
 }
 
 fm_pr_ready_reason() {  # <task-id> <yolo>
