@@ -17,6 +17,7 @@ STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.
 COARSE_STATUS_READY_LINE='state: done · source: status-log · done: PR https://github.com/o/r/pull/7 checks green · run still monitoring PR'
 UNKNOWN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-7'
 REARMED_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: run-8'
+FUTURE_RUN_READY_LINE='state: done · source: run-step · checks green: PR ready for review · run-identity: 7ZZZZZZZZZ'
 WORKING_LINE='state: working · source: run-step · ci running'
 FAILED_LINE='state: failed · source: run-step · run failed'
 PAUSED_GREEN_LINE='state: paused · source: status-log · awaiting upstream owner · checks green: PR ready for review (still monitoring for merge/close)'
@@ -305,6 +306,45 @@ test_changed_run_identity_resurfaces_same_head() {
   pass "new authoritative run identity re-surfaces same-head readiness"
 }
 
+test_coarse_marker_distinguishes_later_run() {
+  local dir state fakebin first rearmed
+  dir=$(make_case coarse-later-run); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" coarse-later-run off
+  first=$(next_ready "$state" "$fakebin" coarse-later-run "$COARSE_STATUS_READY_LINE")
+  commit_record "$state" "$first"
+  rearmed=$(next_ready "$state" "$fakebin" coarse-later-run "$FUTURE_RUN_READY_LINE")
+  [ -n "$rearmed" ] || fail "coarse readiness marker hid a later authoritative run"
+  pass "coarse readiness distinguishes a later authoritative run from benign refinement"
+}
+
+test_status_fallback_distinguishes_rearm_and_head_change() {
+  local dir state fakebin meta rearmed old_head changed
+  dir=$(make_case status-fallback-changes); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" status-fallback off
+  meta="$state/status-fallback.meta"
+  git -C "$dir/status-fallback-wt" checkout -q --detach
+  FM_FAKE_CREW_STATE='' FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    fm_pr_ready_seed_status_signal "$state" status-fallback
+  [ -s "$state/.pr-ready-status-surfaced-status-fallback" ] \
+    || fail "transient status fallback was not persisted"
+  git -C "$dir/status-fallback-wt" checkout -q "fm/status-fallback"
+  rearmed=$(next_ready "$state" "$fakebin" status-fallback "$FUTURE_RUN_READY_LINE")
+  [ -n "$rearmed" ] || fail "status fallback hid a later authoritative run"
+
+  fm_pr_ready_cleanup "$state" status-fallback
+  FM_FAKE_CREW_STATE='' FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    fm_pr_ready_seed_status_signal "$state" status-fallback
+  old_head=$(git -C "$dir/status-fallback-wt" rev-parse HEAD)
+  printf 'changed\n' > "$dir/status-fallback-wt/change"
+  git -C "$dir/status-fallback-wt" add change
+  git -C "$dir/status-fallback-wt" commit -qm changed
+  [ "$(git -C "$dir/status-fallback-wt" rev-parse HEAD)" != "$old_head" ] || fail "head-change fixture did not change HEAD"
+  changed=$(next_ready "$state" "$fakebin" status-fallback "$READY_LINE")
+  [ -n "$changed" ] || fail "status fallback hid readiness on a changed HEAD"
+  [ -e "$meta" ] || fail "status fallback fixture lost task metadata"
+  pass "status fallback distinguishes later runs and HEAD changes"
+}
+
 test_unknown_generation_upgrades_without_duplicate() {
   local dir state fakebin first known recovered marker
   dir=$(make_case unknown-generation); state="$dir/state"; fakebin="$dir/fakebin"
@@ -510,12 +550,14 @@ test_pr_ready_state_cleanup() {
   local dir state
   dir=$(make_case state-cleanup); state="$dir/state"
   touch "$state/.pr-ready-cleanup" "$state/.last-pr-ready-cleanup" \
-    "$state/.pr-ready-superseded-cleanup" "$state/.pr-ready-status-surfaced-cleanup"
+    "$state/.pr-ready-superseded-cleanup" "$state/.pr-ready-status-surfaced-cleanup" \
+    "$state/.pr-ready-observed-cleanup"
   fm_pr_ready_cleanup "$state" cleanup
   [ ! -e "$state/.pr-ready-cleanup" ] || fail "readiness marker survived cleanup"
   [ ! -e "$state/.last-pr-ready-cleanup" ] || fail "readiness cadence marker survived cleanup"
   [ ! -e "$state/.pr-ready-superseded-cleanup" ] || fail "readiness supersession survived cleanup"
   [ ! -e "$state/.pr-ready-status-surfaced-cleanup" ] || fail "status readiness fallback survived cleanup"
+  [ ! -e "$state/.pr-ready-observed-cleanup" ] || fail "readiness observation time survived cleanup"
   grep -F "fm_pr_ready_cleanup \"\$STATE\" \"\$ID\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
     || fail "normal teardown does not invoke PR-ready cleanup"
   grep -F "fm_pr_ready_cleanup \"\$sub_state\" \"\$child_id\"" "$ROOT/bin/fm-teardown.sh" >/dev/null \
@@ -566,6 +608,8 @@ test_done_status_dedupes_through_transient_identity_failures
 test_coarse_status_refines_to_authoritative_baseline
 test_identity_refinement_relation_matrix
 test_changed_run_identity_resurfaces_same_head
+test_coarse_marker_distinguishes_later_run
+test_status_fallback_distinguishes_rearm_and_head_change
 test_unknown_generation_upgrades_without_duplicate
 test_hidden_preexisting_relapse_refines_without_duplicate
 test_observed_relapse_survives_watcher_restart
