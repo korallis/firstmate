@@ -461,6 +461,32 @@ test_status_fallback_anchors_head_to_event() {
   pass "status fallback anchors HEAD identity to the status event"
 }
 
+test_status_fallback_rejects_subsecond_head_race() {
+  local dir state fakebin recovered
+  dir=$(make_case status-fallback-subsecond-head); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" subsecond-head off
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/subsecond-head.status"
+  FM_FAKE_CREW_STATE='' FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    bash -c '
+      . "$1"
+      fm_pr_ready_status_event_ms() { printf "1000500"; }
+      fm_pr_ready_head_at_ms() { git -C "$1" rev-parse --verify HEAD; }
+      fm_pr_ready_file_ms() {
+        case "$1" in
+          */logs/HEAD) printf "1000750" ;;
+          */HEAD) printf "1000000" ;;
+          *) return 1 ;;
+        esac
+      }
+      fm_pr_ready_seed_status_signal "$2" subsecond-head
+    ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state"
+  [ ! -e "$state/.pr-ready-status-surfaced-subsecond-head" ] \
+    || fail "same-second post-status HEAD update was attributed to the stale status"
+  recovered=$(next_ready "$state" "$fakebin" subsecond-head "$READY_LINE")
+  [ -n "$recovered" ] || fail "same-second HEAD race suppressed later authoritative readiness"
+  pass "status fallback rejects subsecond HEAD reflog races"
+}
+
 test_status_fallback_rejects_branch_time_skew() {
   local dir state fakebin recovered
   dir=$(make_case status-fallback-branch-skew); state="$dir/state"; fakebin="$dir/fakebin"
@@ -910,6 +936,7 @@ test_identity_refinement_relation_matrix
 test_changed_run_identity_resurfaces_same_head
 test_coarse_marker_distinguishes_later_run
 test_status_fallback_anchors_head_to_event
+test_status_fallback_rejects_subsecond_head_race
 test_status_fallback_rejects_branch_time_skew
 test_status_fallback_distinguishes_rearm_and_head_change
 test_unknown_generation_upgrades_without_duplicate

@@ -388,7 +388,7 @@ fm_pr_ready_head_at_ms() {  # <worktree> <event-ms>
 }
 
 fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-line> [<event-ms>]
-  local path tmp wt branch head current_head head_path head_ref_ms authority run observed_ms status_sig
+  local path tmp wt branch head current_head head_log head_log_ms authority run observed_ms status_sig
   path=$(fm_pr_ready_status_surfaced_path "$1" "$2")
   tmp="$path.tmp.${BASHPID:-$$}"
   wt=$(fm_pr_ready_meta_value "$3" worktree)
@@ -398,11 +398,11 @@ fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-lin
   current_head=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null || true)
   head=$(fm_pr_ready_head_at_ms "$wt" "$observed_ms" || true)
   [ -n "$head" ] && [ "$head" = "$current_head" ] || return 1
-  head_path=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null || true)
-  [ -n "$head_path" ] && head_path="$head_path/HEAD"
-  head_ref_ms=$(fm_pr_ready_file_ms "$head_path" 2>/dev/null || true)
-  case "$head_ref_ms:$observed_ms" in *[!0-9:]*|:*) return 1 ;; esac
-  [ "$head_ref_ms" -le "$observed_ms" ] || return 1
+  head_log=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null || true)
+  [ -n "$head_log" ] && head_log="$head_log/logs/HEAD"
+  head_log_ms=$(fm_pr_ready_file_ms "$head_log" 2>/dev/null || true)
+  case "$head_log_ms:$observed_ms" in *[!0-9:]*|:*) return 1 ;; esac
+  [ "$head_log_ms" -lt "$observed_ms" ] || return 1
   case "$4" in
     *'run-identity: '*)
       authority=${4#*run-identity: }
