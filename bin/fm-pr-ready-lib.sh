@@ -116,6 +116,10 @@ fm_pr_ready_file_identity() {  # <path>
   fi
 }
 
+fm_pr_ready_file_checkpoint() {  # <path> <bytes>
+  head -c "$2" "$1" 2>/dev/null | cksum | awk '{print $1 ":" $2}'
+}
+
 fm_pr_ready_ci_log_events() {
   printf '%s\n' "$1" | awk '
     /CI checks passed|no CI checks reported - still monitoring/ { state = "G" }
@@ -137,6 +141,7 @@ fm_pr_ready_advance_generation() {  # <generation> <before> <events>
 
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   local path tmp run=$3 current=$4 prior_run prior generation log log_size log_id prior_log_id offset last carry
+  local checkpoint_len checkpoint current_checkpoint new_checkpoint_len new_checkpoint
   local max overlap appended advanced i unread snapshot complete combined consumed reset_log initial events
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
   prior_run=$(fm_pr_ready_meta_value "$path" run)
@@ -146,8 +151,11 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   last=$(fm_pr_ready_meta_value "$path" last)
   carry=$(fm_pr_ready_meta_value "$path" carry)
   prior_log_id=$(fm_pr_ready_meta_value "$path" log_id)
+  checkpoint_len=$(fm_pr_ready_meta_value "$path" checkpoint_len)
+  checkpoint=$(fm_pr_ready_meta_value "$path" checkpoint)
   case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
   case "$offset" in ''|*[!0-9]*) offset= ;; esac
+  case "$checkpoint_len" in ''|*[!0-9]*) checkpoint_len= ;; esac
   if [ "$prior_run" != "$run" ]; then
     prior=
     generation=0
@@ -155,6 +163,8 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     last=
     carry=
     prior_log_id=
+    checkpoint_len=
+    checkpoint=
   fi
   log=$(fm_pr_ready_ci_log_path "$run")
   log_size=$(fm_pr_ready_file_size "$log" || true)
@@ -165,8 +175,12 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     if { [ -n "$prior_log_id" ] && [ -n "$log_id" ] && [ "$prior_log_id" != "$log_id" ]; } \
       || { [ -n "$offset" ] && [ "$log_size" -lt "$offset" ]; }; then
       reset_log=1
+    elif [ -n "$offset" ] && [ -n "$checkpoint_len" ] && [ -n "$checkpoint" ]; then
+      current_checkpoint=$(fm_pr_ready_file_checkpoint "$log" "$checkpoint_len" || true)
+      [ -z "$current_checkpoint" ] || [ "$current_checkpoint" = "$checkpoint" ] || reset_log=1
     fi
     if [ -z "$offset" ] || [ -n "$reset_log" ]; then
+      if [ -n "$offset" ] && [ -n "$reset_log" ]; then generation=$((generation + 1)); fi
       initial=$(tail -c 65536 "$log" 2>/dev/null || true)
       events=$(fm_pr_ready_ci_log_events "$initial")
       if [ -n "$events" ]; then last=${events:${#events}-1:1}; else last=${current:${#current}-1:1}; fi
@@ -213,6 +227,15 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   fi
   [ -n "$last" ] || last=${current:${#current}-1:1}
   [ -n "$log_id" ] || log_id=$prior_log_id
+  if [ -n "$offset" ]; then
+    new_checkpoint_len=$offset
+    [ "$new_checkpoint_len" -le 65536 ] || new_checkpoint_len=65536
+    new_checkpoint=$(fm_pr_ready_file_checkpoint "$log" "$new_checkpoint_len" || true)
+    if [ -n "$new_checkpoint" ]; then
+      checkpoint_len=$new_checkpoint_len
+      checkpoint=$new_checkpoint
+    fi
+  fi
   tmp="$path.tmp.${BASHPID:-$$}"
   {
     printf 'run=%s\n' "$run"
@@ -222,6 +245,8 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     printf 'last=%s\n' "$last"
     printf 'carry=%s\n' "$carry"
     printf 'log_id=%s\n' "$log_id"
+    printf 'checkpoint_len=%s\n' "$checkpoint_len"
+    printf 'checkpoint=%s\n' "$checkpoint"
   } > "$tmp" && mv -f "$tmp" "$path" || return 1
   printf '%s' "$generation"
 }

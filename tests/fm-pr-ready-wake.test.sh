@@ -806,8 +806,8 @@ test_ci_log_shrink_preserves_fresh_relapse() {
     unchanged=$(fm_pr_ready_ci_generation "$state" shrink run-shrink NG)
     printf "%s:%s:%s" "$initial" "$rotated" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
-  [ "$result" = "0:0:0" ] || fail "shrunk CI log replayed historical relapse transitions: $result"
-  pass "CI log shrink rebaselines without replaying historical transitions"
+  [ "$result" = "0:1:1" ] || fail "shrunk CI log did not advance the relapse generation exactly once: $result"
+  pass "CI log shrink supersedes prior readiness exactly once"
 }
 
 test_ci_log_truncate_regrow_preserves_fresh_relapse() {
@@ -829,8 +829,8 @@ test_ci_log_truncate_regrow_preserves_fresh_relapse() {
     unchanged=$(fm_pr_ready_ci_generation "$state" truncate-regrow run-truncate-regrow NG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
-  [ "$result" = "0:0:0" ] || fail "truncate-regrow CI log replayed historical relapse transitions: $result"
-  pass "CI log truncate-regrow rebaselines without replaying history"
+  [ "$result" = "0:1:1" ] || fail "truncate-regrow CI log did not advance the relapse generation exactly once: $result"
+  pass "CI log truncate-regrow supersedes prior readiness exactly once"
 }
 
 test_ci_log_middle_rewrite_preserves_fresh_relapse() {
@@ -861,8 +861,8 @@ test_ci_log_middle_rewrite_preserves_fresh_relapse() {
     unchanged=$(fm_pr_ready_ci_generation "$state" middle-rewrite run-middle-rewrite GNG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$block")
-  [ "$result" = "0:0:0" ] || fail "middle CI log rewrite replayed historical relapse transitions: $result"
-  pass "CI log middle rewrites do not replay historical transitions"
+  [ "$result" = "0:1:1" ] || fail "middle CI log rewrite did not advance the relapse generation exactly once: $result"
+  pass "CI log middle rewrite supersedes prior readiness exactly once"
 }
 
 test_ci_log_reset_boundary_preserves_first_event() {
@@ -892,8 +892,8 @@ test_ci_log_reset_boundary_preserves_first_event() {
     unchanged=$(fm_pr_ready_ci_generation "$state" reset-boundary run-reset-boundary GNG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement" "$window")
-  [ "$result" = "0:0:0" ] || fail "reset window replayed historical relapse events: $result"
-  pass "CI log reset rebaselines complete historical events"
+  [ "$result" = "0:1:1" ] || fail "reset CI log did not advance the relapse generation exactly once: $result"
+  pass "CI log reset supersedes prior readiness exactly once"
 }
 
 test_ci_log_replacement_preserves_fresh_relapse() {
@@ -915,8 +915,8 @@ test_ci_log_replacement_preserves_fresh_relapse() {
     unchanged=$(fm_pr_ready_ci_generation "$state" replacement run-replacement NG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement")
-  [ "$result" = "0:0:0" ] || fail "replaced CI log replayed historical relapse transitions: $result"
-  pass "CI log replacement rebaselines without replaying history"
+  [ "$result" = "0:1:1" ] || fail "replaced CI log did not advance the relapse generation exactly once: $result"
+  pass "CI log replacement supersedes prior readiness exactly once"
 }
 
 test_identical_ci_log_replacement_is_new_provenance() {
@@ -938,8 +938,8 @@ test_identical_ci_log_replacement_is_new_provenance() {
     unchanged=$(fm_pr_ready_ci_generation "$state" identical-replacement run-identical-replacement GNG)
     printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
   ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement")
-  [ "$result" = "0:0:0" ] || fail "identical replacement replayed the same relapse cycle: $result"
-  pass "identical CI log replacement remains deduplicated"
+  [ "$result" = "0:1:1" ] || fail "identical replacement did not advance the provenance generation exactly once: $result"
+  pass "identical CI log replacement supersedes prior provenance exactly once"
 }
 
 test_initial_ci_snapshot_preserves_post_state_relapse() {
