@@ -544,22 +544,24 @@ SH
 }
 
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation() {
-  local dir state fakebin first recovered repeated rotated after_rotation
+  local dir state fakebin first recovered repeated unchanged log
   dir=$(make_case between-scan-relapse); state="$dir/state"; fakebin="$dir/fakebin"
   make_task "$dir" between-scan-relapse off
-  first=$(next_ready "$state" "$fakebin" between-scan-relapse "$ROTATED_READY_LINE")
+  log="$dir/nm/logs/run-7/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  first=$(NM_HOME="$dir/nm" next_ready "$state" "$fakebin" between-scan-relapse "$ROTATED_READY_LINE")
   commit_record "$state" "$first"
-  recovered=$(next_ready "$state" "$fakebin" between-scan-relapse "$RECOVERED_READY_LINE")
+  printf 'checks failed: unit\nall CI checks passed - still monitoring until merged or closed\n' >> "$log"
+  recovered=$(NM_HOME="$dir/nm" next_ready "$state" "$fakebin" between-scan-relapse "$RECOVERED_READY_LINE")
   [ -n "$recovered" ] || fail "same-run between-scan relapse occurrence was suppressed"
   commit_record "$state" "$recovered"
-  repeated=$(next_ready "$state" "$fakebin" between-scan-relapse "$REPEATED_RECOVERED_READY_LINE")
-  [ -n "$repeated" ] || fail "identical repeated relapse cycle reused the prior identity"
-  commit_record "$state" "$repeated"
-  rotated=$(next_ready "$state" "$fakebin" between-scan-relapse "$ROTATED_READY_LINE")
-  [ -z "$rotated" ] || fail "bounded-tail rotation emitted a duplicate readiness wake"
-  after_rotation=$(next_ready "$state" "$fakebin" between-scan-relapse "$RECOVERED_READY_LINE")
-  [ -n "$after_rotation" ] || fail "relapse after bounded-tail rotation reused an old identity"
-  pass "persistent occurrence sequence survives repeated cycles and bounded-tail rotation"
+  unchanged=$(NM_HOME="$dir/nm" next_ready "$state" "$fakebin" between-scan-relapse "$RECOVERED_READY_LINE")
+  [ -z "$unchanged" ] || fail "unchanged transition window emitted a duplicate readiness wake"
+  printf 'checks failed: unit\nall CI checks passed - still monitoring until merged or closed\n' >> "$log"
+  repeated=$(NM_HOME="$dir/nm" next_ready "$state" "$fakebin" between-scan-relapse "$RECOVERED_READY_LINE")
+  [ -n "$repeated" ] || fail "identical repeated relapse window reused the prior identity"
+  pass "persistent log offsets distinguish identical relapse windows after bounded-tail rotation"
 }
 
 test_relapse_rearm_and_head_change_supersede_green() {

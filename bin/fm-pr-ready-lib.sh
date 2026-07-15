@@ -96,18 +96,71 @@ fm_pr_ready_verdict() {  # <crew-state-line>
   esac
 }
 
+fm_pr_ready_ci_log_path() {  # <run-id>
+  printf '%s/logs/%s/ci.log' "${NM_HOME:-$HOME/.no-mistakes}" "$1"
+}
+
+fm_pr_ready_file_size() {  # <path>
+  if [ "$(uname)" = Darwin ]; then
+    stat -f %z "$1" 2>/dev/null
+  else
+    stat -c %s "$1" 2>/dev/null
+  fi
+}
+
+fm_pr_ready_ci_log_events() {
+  printf '%s\n' "$1" | awk '
+    /CI checks passed|no CI checks reported - still monitoring/ { state = "G" }
+    /no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout/ { state = "N" }
+    state != "" && state != prior { printf "%s", state; prior = state }
+  '
+}
+
+fm_pr_ready_advance_generation() {  # <generation> <before> <events>
+  local generation=$1 before=$2 events=$3 i=0 char
+  while [ "$i" -lt "${#events}" ]; do
+    char=${events:i:1}
+    if [ "$before" = N ] && [ "$char" = G ]; then generation=$((generation + 1)); fi
+    before=$char
+    i=$((i + 1))
+  done
+  printf '%s\t%s' "$generation" "$before"
+}
+
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
-  local path tmp run=$3 current=$4 prior_run prior generation max overlap appended before i char
+  local path tmp run=$3 current=$4 prior_run prior generation log log_size offset last
+  local max overlap appended advanced i
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
   prior_run=$(fm_pr_ready_meta_value "$path" run)
   prior=$(fm_pr_ready_meta_value "$path" window)
   generation=$(fm_pr_ready_meta_value "$path" generation)
+  offset=$(fm_pr_ready_meta_value "$path" offset)
+  last=$(fm_pr_ready_meta_value "$path" last)
   case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
+  case "$offset" in ''|*[!0-9]*) offset= ;; esac
   if [ "$prior_run" != "$run" ]; then
     prior=
     generation=0
+    offset=
+    last=
   fi
-  if [ -n "$prior" ]; then
+  log=$(fm_pr_ready_ci_log_path "$run")
+  log_size=$(fm_pr_ready_file_size "$log" || true)
+  case "$log_size" in ''|*[!0-9]*) log_size= ;; esac
+  if [ -n "$log_size" ]; then
+    if [ -n "$offset" ] && [ "$log_size" -ge "$offset" ]; then
+      if [ "$log_size" -gt "$offset" ]; then
+        appended=$(tail -c "+$((offset + 1))" "$log" 2>/dev/null || true)
+        appended=$(fm_pr_ready_ci_log_events "$appended")
+        advanced=$(fm_pr_ready_advance_generation "$generation" "$last" "$appended")
+        generation=${advanced%%$'\t'*}
+        last=${advanced#*$'\t'}
+      fi
+    else
+      last=${current:${#current}-1:1}
+    fi
+    offset=$log_size
+  elif [ -z "$offset" ] && [ -n "$prior" ]; then
     max=${#prior}
     [ "${#current}" -lt "$max" ] && max=${#current}
     overlap=0
@@ -117,20 +170,18 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
       i=$((i - 1))
     done
     appended=${current:overlap}
-    before=${prior:${#prior}-1:1}
-    i=0
-    while [ "$i" -lt "${#appended}" ]; do
-      char=${appended:i:1}
-      if [ "$before" = N ] && [ "$char" = G ]; then generation=$((generation + 1)); fi
-      before=$char
-      i=$((i + 1))
-    done
+    advanced=$(fm_pr_ready_advance_generation "$generation" "${prior:${#prior}-1:1}" "$appended")
+    generation=${advanced%%$'\t'*}
+    last=${advanced#*$'\t'}
   fi
+  [ -n "$last" ] || last=${current:${#current}-1:1}
   tmp="$path.tmp.${BASHPID:-$$}"
   {
     printf 'run=%s\n' "$run"
     printf 'window=%s\n' "$current"
     printf 'generation=%s\n' "$generation"
+    printf 'offset=%s\n' "$offset"
+    printf 'last=%s\n' "$last"
   } > "$tmp" && mv -f "$tmp" "$path" || return 1
   printf '%s' "$generation"
 }
