@@ -594,6 +594,28 @@ test_ci_log_snapshot_excludes_concurrent_appends() {
   pass "CI generation consumes only bytes in its size snapshot"
 }
 
+test_ci_log_snapshot_preserves_split_event_lines() {
+  local dir state log result
+  dir=$(make_case ci-log-split-line); state="$dir/state"
+  log="$dir/nm/logs/run-split/ci.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    fm_pr_ready_ci_generation "$state" split run-split G >/dev/null
+    printf "checks fail" >> "$log"
+    partial=$(fm_pr_ready_ci_generation "$state" split run-split G)
+    printf "ed: unit\nall CI checks passed - still monitoring until merged or closed\n" >> "$log"
+    completed=$(fm_pr_ready_ci_generation "$state" split run-split G)
+    unchanged=$(fm_pr_ready_ci_generation "$state" split run-split G)
+    printf "%s:%s:%s" "$partial" "$completed" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log")
+  [ "$result" = "0:1:1" ] || fail "split CI event line was not preserved across snapshots: $result"
+  pass "CI generation defers incomplete event lines until a later snapshot completes them"
+}
+
 test_relapse_rearm_and_head_change_supersede_green() {
   local dir state fakebin first again marker
   dir=$(make_case relapse-rearm); state="$dir/state"; fakebin="$dir/fakebin"
@@ -773,6 +795,7 @@ test_pending_signal_bounds_pr_ready_sweep_work
 test_signal_arriving_during_sweep_has_incremental_latency
 test_persistent_relapse_sequence_survives_identical_cycles_and_tail_rotation
 test_ci_log_snapshot_excludes_concurrent_appends
+test_ci_log_snapshot_preserves_split_event_lines
 test_relapse_rearm_and_head_change_supersede_green
 test_busy_pane_rearm_is_observed_by_task_scan
 test_changing_pane_failure_is_observed_by_task_scan

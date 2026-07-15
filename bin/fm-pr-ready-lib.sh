@@ -129,7 +129,7 @@ fm_pr_ready_advance_generation() {  # <generation> <before> <events>
 
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   local path tmp run=$3 current=$4 prior_run prior generation log log_size offset last
-  local max overlap appended advanced i unread
+  local max overlap appended advanced i unread snapshot complete consumed
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
   prior_run=$(fm_pr_ready_meta_value "$path" run)
   prior=$(fm_pr_ready_meta_value "$path" window)
@@ -151,16 +151,28 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     if [ -n "$offset" ] && [ "$log_size" -ge "$offset" ]; then
       if [ "$log_size" -gt "$offset" ]; then
         unread=$((log_size - offset))
-        appended=$(tail -c "+$((offset + 1))" "$log" 2>/dev/null | head -c "$unread" || true)
-        appended=$(fm_pr_ready_ci_log_events "$appended")
-        advanced=$(fm_pr_ready_advance_generation "$generation" "$last" "$appended")
-        generation=${advanced%%$'\t'*}
-        last=${advanced#*$'\t'}
+        snapshot="$path.snapshot.${BASHPID:-$$}"
+        complete="$snapshot.complete"
+        tail -c "+$((offset + 1))" "$log" 2>/dev/null | head -c "$unread" > "$snapshot" || true
+        consumed=$unread
+        if [ "$(tail -c 1 "$snapshot" 2>/dev/null | wc -l | tr -d ' ')" != 1 ]; then
+          sed '$d' "$snapshot" > "$complete"
+          mv -f "$complete" "$snapshot"
+          consumed=$(wc -c < "$snapshot" | tr -d ' ')
+        fi
+        if [ "$consumed" -gt 0 ]; then
+          appended=$(fm_pr_ready_ci_log_events "$(cat "$snapshot")")
+          advanced=$(fm_pr_ready_advance_generation "$generation" "$last" "$appended")
+          generation=${advanced%%$'\t'*}
+          last=${advanced#*$'\t'}
+          offset=$((offset + consumed))
+        fi
+        rm -f "$snapshot" "$complete"
       fi
     else
       last=${current:${#current}-1:1}
     fi
-    offset=$log_size
+    [ -n "$offset" ] || offset=$log_size
   elif [ -z "$offset" ] && [ -n "$prior" ]; then
     max=${#prior}
     [ "${#current}" -lt "$max" ] && max=${#current}
