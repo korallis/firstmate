@@ -108,6 +108,14 @@ fm_pr_ready_file_size() {  # <path>
   fi
 }
 
+fm_pr_ready_file_identity() {  # <path>
+  if [ "$(uname)" = Darwin ]; then
+    stat -f '%d:%i' "$1" 2>/dev/null
+  else
+    stat -c '%d:%i' "$1" 2>/dev/null
+  fi
+}
+
 fm_pr_ready_ci_log_events() {
   printf '%s\n' "$1" | awk '
     /CI checks passed|no CI checks reported - still monitoring/ { state = "G" }
@@ -128,14 +136,15 @@ fm_pr_ready_advance_generation() {  # <generation> <before> <events>
 }
 
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
-  local path tmp run=$3 current=$4 prior_run prior generation log log_size offset last
-  local max overlap appended advanced i unread snapshot complete consumed start parse_snapshot
+  local path tmp run=$3 current=$4 prior_run prior generation log log_size log_id prior_log_id offset last
+  local max overlap appended advanced i unread snapshot complete consumed start parse_snapshot reset_log
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
   prior_run=$(fm_pr_ready_meta_value "$path" run)
   prior=$(fm_pr_ready_meta_value "$path" window)
   generation=$(fm_pr_ready_meta_value "$path" generation)
   offset=$(fm_pr_ready_meta_value "$path" offset)
   last=$(fm_pr_ready_meta_value "$path" last)
+  prior_log_id=$(fm_pr_ready_meta_value "$path" log_id)
   case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
   case "$offset" in ''|*[!0-9]*) offset= ;; esac
   if [ "$prior_run" != "$run" ]; then
@@ -143,18 +152,27 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     generation=0
     offset=
     last=
+    prior_log_id=
   fi
   log=$(fm_pr_ready_ci_log_path "$run")
   log_size=$(fm_pr_ready_file_size "$log" || true)
+  log_id=$(fm_pr_ready_file_identity "$log" || true)
   case "$log_size" in ''|*[!0-9]*) log_size= ;; esac
   if [ -n "$log_size" ]; then
+    reset_log=
+    if { [ -n "$prior_log_id" ] && [ "$prior_log_id" != "$log_id" ]; } \
+      || { [ -n "$offset" ] && [ "$log_size" -lt "$offset" ]; }; then
+      reset_log=1
+      offset=$log_size
+      last=${current:${#current}-1:1}
+    fi
     start=
-    if [ -z "$offset" ]; then
+    if [ -z "$reset_log" ] && [ -z "$offset" ]; then
       start=0
       [ "$log_size" -le 65536 ] || start=$((log_size - 65536))
       offset=$start
     fi
-    if [ "$log_size" -ge "$offset" ]; then
+    if [ -z "$reset_log" ] && [ "$log_size" -ge "$offset" ]; then
       if [ "$log_size" -gt "$offset" ]; then
         unread=$((log_size - offset))
         snapshot="$path.snapshot.${BASHPID:-$$}"
@@ -181,9 +199,6 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
         fi
         rm -f "$snapshot" "$complete" "$parse_snapshot"
       fi
-    else
-      offset=
-      last=
     fi
   elif [ -z "$offset" ] && [ -n "$prior" ]; then
     max=${#prior}
@@ -207,6 +222,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     printf 'generation=%s\n' "$generation"
     printf 'offset=%s\n' "$offset"
     printf 'last=%s\n' "$last"
+    printf 'log_id=%s\n' "$log_id"
   } > "$tmp" && mv -f "$tmp" "$path" || return 1
   printf '%s' "$generation"
 }
@@ -300,6 +316,21 @@ fm_pr_ready_file_ms() {  # <path>
   printf '%s%s' "$seconds" "${fraction:0:3}"
 }
 
+fm_pr_ready_file_ns() {  # <path>
+  local seconds value fraction
+  if [ "$(uname)" = Darwin ]; then
+    value=$(stat -f %Fm "$1" 2>/dev/null) || return 1
+    seconds=${value%%.*}
+    fraction=${value#*.}000000000
+  else
+    seconds=$(stat -c %Y "$1" 2>/dev/null) || return 1
+    value=$(stat -c %y "$1" 2>/dev/null) || return 1
+    case "$value" in *.*) fraction=${value#*.}; fraction=${fraction%% *}000000000 ;; *) fraction=000000000 ;; esac
+  fi
+  case "$seconds:$fraction" in *[!0-9:]*|:*) return 1 ;; esac
+  printf '%s%s' "$seconds" "${fraction:0:9}"
+}
+
 fm_pr_ready_status_event_ms() {  # <state> <task-id>
   fm_pr_ready_file_ms "$1/$2.status" 2>/dev/null || fm_pr_ready_now_ms
 }
@@ -388,7 +419,7 @@ fm_pr_ready_head_at_ms() {  # <worktree> <event-ms>
 }
 
 fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-line> [<event-ms>]
-  local path tmp wt branch head current_head head_log head_log_ms authority run observed_ms status_sig
+  local path tmp wt branch head current_head head_log head_log_ns status_ns authority run observed_ms status_sig
   path=$(fm_pr_ready_status_surfaced_path "$1" "$2")
   tmp="$path.tmp.${BASHPID:-$$}"
   wt=$(fm_pr_ready_meta_value "$3" worktree)
@@ -400,9 +431,10 @@ fm_pr_ready_mark_status_surfaced() {  # <state> <task-id> <meta> <crew-state-lin
   [ -n "$head" ] && [ "$head" = "$current_head" ] || return 1
   head_log=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null || true)
   [ -n "$head_log" ] && head_log="$head_log/logs/HEAD"
-  head_log_ms=$(fm_pr_ready_file_ms "$head_log" 2>/dev/null || true)
-  case "$head_log_ms:$observed_ms" in *[!0-9:]*|:*) return 1 ;; esac
-  [ "$head_log_ms" -lt "$observed_ms" ] || return 1
+  head_log_ns=$(fm_pr_ready_file_ns "$head_log" 2>/dev/null || true)
+  status_ns=$(fm_pr_ready_file_ns "$1/$2.status" 2>/dev/null || true)
+  case "$head_log_ns:$status_ns" in *[!0-9:]*|:*) return 1 ;; esac
+  [ "$head_log_ns" -lt "$status_ns" ] || return 1
   case "$4" in
     *'run-identity: '*)
       authority=${4#*run-identity: }
