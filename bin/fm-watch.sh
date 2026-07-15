@@ -455,6 +455,19 @@ clear_pause_tracking() {  # <window>
   rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
 }
 
+clear_resumed_pr_ready_pause_scans() {
+  local meta task win last
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    task=$(basename "$meta" .meta)
+    last=$(last_status_line "$STATE/$task.status")
+    status_is_paused "$last" && continue
+    rm -f "$(fm_pr_ready_pause_scan_path "$STATE" "task-$task")"
+    win=$(fm_backend_target_of_meta "$meta" 2>/dev/null || true)
+    [ -z "$win" ] || rm -f "$(fm_pr_ready_pause_scan_path "$STATE" "$win")"
+  done
+}
+
 pause_state_class() {  # <window> <task>
   local win=$1 task=$2 key last recheck_file class
   key=${win//:/_}
@@ -737,6 +750,7 @@ while :; do
   # Liveness beacon for fm-guard.sh: a fresh mtime here means a watcher is
   # alive. Supervision scripts warn when this goes stale with tasks in flight.
   touch "$STATE/.last-watcher-beat"
+  clear_resumed_pr_ready_pause_scans
 
   # Slow per-task checks (firstmate writes these, e.g. a merged-PR poll).
   # Time-based via .last-check mtime so the cadence survives watcher restarts.

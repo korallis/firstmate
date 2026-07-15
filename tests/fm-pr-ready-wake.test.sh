@@ -1403,6 +1403,30 @@ test_pr_ready_state_cleanup() {
   pass "normal and secondmate-child teardown remove persistent PR-ready state"
 }
 
+test_task_fallback_pause_marker_clears_on_resume() {
+  local dir state fakebin out pid marker
+  dir=$(make_case task-fallback-pause-resume); state="$dir/state"; fakebin="$dir/fakebin"
+  make_task "$dir" fallback-resume off
+  grep -v '^window=' "$state/fallback-resume.meta" > "$state/fallback-resume.meta.tmp"
+  mv "$state/fallback-resume.meta.tmp" "$state/fallback-resume.meta"
+  printf 'working: resumed after external wait\n' > "$state/fallback-resume.status"
+  printf '%s' "$(seen_sig "$state/fallback-resume.status")" > "$state/.seen-fallback-resume_status"
+  marker=$(fm_pr_ready_pause_scan_path "$state" task-fallback-resume)
+  touch "$marker" "$state/.last-pr-ready-fallback-resume"
+  out="$dir/watch.out"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PR_READY_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PR_READY_SCAN_INTERVAL=999999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" &
+  pid=$!
+  wait_for_marker_clear "$marker" "$pid" \
+    || { reap "$pid"; fail "resumed task without a backend target retained fallback pause cadence"; }
+  kill -0 "$pid" 2>/dev/null \
+    || { wait "$pid" 2>/dev/null || true; fail "fallback pause cleanup produced an actionable wake"; }
+  reap "$pid"
+  pass "resumed tasks without backend targets clear fallback pause cadence"
+}
+
 test_keyed_pause_precedence_and_stale_absorption() {
   local dir state fakebin out pid key record
   dir=$(make_case keyed-pause); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1534,5 +1558,6 @@ test_busy_pane_rearm_is_observed_by_task_scan
 test_changing_pane_failure_is_observed_by_task_scan
 test_approval_posture_changes_reason_not_authority
 test_pr_ready_state_cleanup
+test_task_fallback_pause_marker_clears_on_resume
 test_keyed_pause_precedence_and_stale_absorption
 printf 'all fm-pr-ready wake tests passed\n'
