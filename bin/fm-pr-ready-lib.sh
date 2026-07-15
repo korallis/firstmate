@@ -117,18 +117,10 @@ fm_pr_ready_file_identity() {  # <path>
 }
 
 fm_pr_ready_ci_checkpoint() {  # <path> <consumed-bytes>
-  local path=$1 consumed=$2 tail_start tail_size
+  local path=$1 consumed=$2
   case "$consumed" in ''|*[!0-9]*) return 1 ;; esac
   [ "$consumed" -gt 0 ] || { printf 'empty'; return; }
-  tail_size=$consumed
-  [ "$tail_size" -le 4096 ] || tail_size=4096
-  tail_start=$((consumed - tail_size + 1))
-  {
-    head -c "$tail_size" "$path" 2>/dev/null
-    if [ "$consumed" -gt 4096 ]; then
-      tail -c "+$tail_start" "$path" 2>/dev/null | head -c "$tail_size"
-    fi
-  } | cksum | awk '{print $1 ":" $2}'
+  head -c "$consumed" "$path" 2>/dev/null | cksum | awk '{print $1 ":" $2}'
 }
 
 fm_pr_ready_ci_log_events() {
@@ -152,7 +144,7 @@ fm_pr_ready_advance_generation() {  # <generation> <before> <events>
 
 fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
   local path tmp run=$3 current=$4 prior_run prior generation log log_size log_id prior_log_id offset last
-  local max overlap appended advanced i unread snapshot complete consumed start parse_snapshot reset_log checkpoint prior_checkpoint
+  local max overlap appended advanced i unread snapshot complete consumed start start_midline parse_snapshot reset_log checkpoint prior_checkpoint
   path=$(fm_pr_ready_ci_sequence_path "$1" "$2")
   prior_run=$(fm_pr_ready_meta_value "$path" run)
   prior=$(fm_pr_ready_meta_value "$path" window)
@@ -193,7 +185,13 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
     start=
     if [ -z "$offset" ]; then
       start=0
-      [ "$log_size" -le 65536 ] || start=$((log_size - 65536))
+      start_midline=
+      if [ "$log_size" -gt 65536 ]; then
+        start=$((log_size - 65536))
+        if [ "$(dd if="$log" bs=1 skip=$((start - 1)) count=1 2>/dev/null | wc -l | tr -d ' ')" != 1 ]; then
+          start_midline=1
+        fi
+      fi
       offset=$start
     fi
     if [ "$log_size" -ge "$offset" ]; then
@@ -210,7 +208,7 @@ fm_pr_ready_ci_generation() {  # <state> <task-id> <run-id> <bounded-events>
           consumed=$(wc -c < "$snapshot" | tr -d ' ')
         fi
         if [ "$consumed" -gt 0 ]; then
-          if [ "${start:-0}" -gt 0 ]; then
+          if [ -n "${start_midline:-}" ]; then
             sed '1d' "$snapshot" > "$parse_snapshot"
           else
             cp "$snapshot" "$parse_snapshot"

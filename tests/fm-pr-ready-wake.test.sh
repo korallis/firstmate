@@ -810,6 +810,69 @@ test_ci_log_truncate_regrow_preserves_fresh_relapse() {
   pass "CI log checkpoint detects truncate-regrow relapse transitions"
 }
 
+test_ci_log_middle_rewrite_preserves_fresh_relapse() {
+  local dir state log block result
+  dir=$(make_case ci-log-middle-rewrite); state="$dir/state"
+  log="$dir/nm/logs/run-middle-rewrite/ci.log"
+  block="$dir/rewrite.block"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  head -c 5000 /dev/zero | tr '\0' a >> "$log"
+  printf '\n' >> "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    block=$4
+    rewrite_at=$(fm_pr_ready_file_size "$log")
+    head -c 256 /dev/zero | tr "\0" x >> "$log"
+    printf "\n" >> "$log"
+    head -c 5000 /dev/zero | tr "\0" b >> "$log"
+    printf "\n" >> "$log"
+    initial=$(fm_pr_ready_ci_generation "$state" middle-rewrite run-middle-rewrite G)
+    printf "checks failed: unit\nall CI checks passed - still monitoring until merged or closed\n" > "$block"
+    block_size=$(fm_pr_ready_file_size "$block")
+    head -c $((256 - block_size)) /dev/zero | tr "\0" y >> "$block"
+    dd if="$block" of="$log" bs=1 seek="$rewrite_at" conv=notrunc 2>/dev/null
+    recovered=$(fm_pr_ready_ci_generation "$state" middle-rewrite run-middle-rewrite GNG)
+    unchanged=$(fm_pr_ready_ci_generation "$state" middle-rewrite run-middle-rewrite GNG)
+    printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$block")
+  [ "$result" = "0:1:1" ] || fail "middle CI log rewrite skipped a fresh relapse: $result"
+  pass "CI log checkpoint detects rewrites between boundary regions"
+}
+
+test_ci_log_reset_boundary_preserves_first_event() {
+  local dir state log replacement window result
+  dir=$(make_case ci-log-reset-boundary); state="$dir/state"
+  log="$dir/nm/logs/run-reset-boundary/ci.log"
+  replacement="$dir/replacement.log"
+  window="$dir/window.log"
+  mkdir -p "$(dirname "$log")"
+  printf 'all CI checks passed - still monitoring until merged or closed\n' > "$log"
+  result=$(NM_HOME="$dir/nm" bash -c '
+    . "$1"
+    state=$2
+    log=$3
+    replacement=$4
+    window=$5
+    initial=$(fm_pr_ready_ci_generation "$state" reset-boundary run-reset-boundary G)
+    head -c 99 /dev/zero | tr "\0" p > "$replacement"
+    printf "\n" >> "$replacement"
+    printf "checks failed: unit\nall CI checks passed - still monitoring until merged or closed\n" > "$window"
+    window_size=$(fm_pr_ready_file_size "$window")
+    head -c $((65535 - window_size)) /dev/zero | tr "\0" z >> "$window"
+    printf "\n" >> "$window"
+    cat "$window" >> "$replacement"
+    mv "$replacement" "$log"
+    recovered=$(fm_pr_ready_ci_generation "$state" reset-boundary run-reset-boundary GNG)
+    unchanged=$(fm_pr_ready_ci_generation "$state" reset-boundary run-reset-boundary GNG)
+    printf "%s:%s:%s" "$initial" "$recovered" "$unchanged"
+  ' _ "$ROOT/bin/fm-pr-ready-lib.sh" "$state" "$log" "$replacement" "$window")
+  [ "$result" = "0:1:1" ] || fail "reset window dropped a complete first relapse event: $result"
+  pass "CI log reset preserves complete events at the snapshot boundary"
+}
+
 test_ci_log_replacement_preserves_fresh_relapse() {
   local dir state log replacement result
   dir=$(make_case ci-log-replacement); state="$dir/state"
@@ -1065,6 +1128,8 @@ test_ci_log_snapshot_excludes_concurrent_appends
 test_ci_log_snapshot_preserves_split_event_lines
 test_ci_log_shrink_preserves_fresh_relapse
 test_ci_log_truncate_regrow_preserves_fresh_relapse
+test_ci_log_middle_rewrite_preserves_fresh_relapse
+test_ci_log_reset_boundary_preserves_first_event
 test_ci_log_replacement_preserves_fresh_relapse
 test_identical_ci_log_replacement_is_new_provenance
 test_initial_ci_snapshot_preserves_post_state_relapse
