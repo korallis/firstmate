@@ -73,6 +73,8 @@ fi
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-marker-lib.sh
 . "$SCRIPT_DIR/fm-marker-lib.sh"
+# shellcheck source=bin/fm-send-wait-lib.sh
+. "$SCRIPT_DIR/fm-send-wait-lib.sh"
 
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the requested message WILL still be sent.' "$SCRIPT_DIR/fm-guard.sh" || true
 
@@ -215,39 +217,8 @@ fi
 
 # Wait until the target agent is not busy so text is not merely queued behind a
 # long shell. Backends that report unknown (tmux) skip the wait. --key path
-# never waits so Escape/C-c can interrupt.
-fm_send_wait_until_idle() {  # <backend> <target>
-  local backend=$1 target=$2 wait_s poll_s waited state
-  wait_s=${FM_SEND_BUSY_WAIT_SECS:-3600}
-  poll_s=${FM_SEND_BUSY_POLL_SECS:-5}
-  case "$wait_s" in ''|*[!0-9]*) wait_s=3600 ;; esac
-  case "$poll_s" in ''|*[!0-9]*) poll_s=5 ;; esac
-  [ "$wait_s" -gt 0 ] || return 0
-  [ "$poll_s" -gt 0 ] || poll_s=5
-  waited=0
-  while [ "$waited" -le "$wait_s" ]; do
-    state=$(fm_backend_busy_state "$backend" "$target" 2>/dev/null || printf 'unknown')
-    case "$state" in
-      busy)
-        if [ "$waited" -eq 0 ]; then
-          echo "fm-send: $target is busy; waiting up to ${wait_s}s for idle before delivering text (set FM_SEND_BUSY_WAIT_SECS=0 to skip)" >&2
-        elif [ $((waited % 30)) -eq 0 ]; then
-          echo "fm-send: still waiting on busy $target (${waited}s/${wait_s}s)" >&2
-        fi
-        sleep "$poll_s"
-        waited=$((waited + poll_s))
-        ;;
-      *)
-        if [ "$waited" -gt 0 ]; then
-          echo "fm-send: $target idle after ${waited}s; delivering text" >&2
-        fi
-        return 0
-        ;;
-    esac
-  done
-  echo "error: $target still busy after ${wait_s}s; text not sent (tried $RESOLUTION_TRIED). Interrupt the agent or raise FM_SEND_BUSY_WAIT_SECS." >&2
-  return 1
-}
+# never waits so Escape/C-c can interrupt. fm_send_wait_until_idle lives in
+# bin/fm-send-wait-lib.sh (sourced above) so the shipped helper is testable.
 
 if [ "${1:-}" = "--key" ]; then
   if ! fm_backend_send_key "$TARGET_BACKEND" "$T" "$2" "$EXPECTED_LABEL"; then
