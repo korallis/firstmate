@@ -33,6 +33,16 @@
 # footer appears, so an immediate peek would otherwise see the stale idle pane.
 # The pause is fm-send-only; the shared submit core (used by the away-mode daemon,
 # which only needs "submitted") does not pay it, and the --key path is unaffected.
+#
+# Busy-agent wait (text path only, not --key): when the target backend reports
+# busy/working (e.g. herdr agent_status=working while a long shell like
+# no-mistakes axi respond is running), Pi-like TUIs only QUEUE steering and do
+# not process it until the shell ends. Delivering into that queue looks like a
+# successful send but the instruction is not acted on for minutes. Before typing
+# text, fm-send waits until the agent is not busy, then submits. Tune with
+# FM_SEND_BUSY_WAIT_SECS (default 3600, 0 disables). Poll interval
+# FM_SEND_BUSY_POLL_SECS (default 5). Progress lines go to stderr. --key is never
+# waited: Escape/C-c are how you interrupt a busy agent.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -203,12 +213,51 @@ fi
 # send implementation. A failed backend send is still surfaced below as a hard
 # error with the attempted resolution attached.
 
+# Wait until the target agent is not busy so text is not merely queued behind a
+# long shell. Backends that report unknown (tmux) skip the wait. --key path
+# never waits so Escape/C-c can interrupt.
+fm_send_wait_until_idle() {  # <backend> <target>
+  local backend=$1 target=$2 wait_s poll_s waited state
+  wait_s=${FM_SEND_BUSY_WAIT_SECS:-3600}
+  poll_s=${FM_SEND_BUSY_POLL_SECS:-5}
+  case "$wait_s" in ''|*[!0-9]*) wait_s=3600 ;; esac
+  case "$poll_s" in ''|*[!0-9]*) poll_s=5 ;; esac
+  [ "$wait_s" -gt 0 ] || return 0
+  [ "$poll_s" -gt 0 ] || poll_s=5
+  waited=0
+  while [ "$waited" -le "$wait_s" ]; do
+    state=$(fm_backend_busy_state "$backend" "$target" 2>/dev/null || printf 'unknown')
+    case "$state" in
+      busy)
+        if [ "$waited" -eq 0 ]; then
+          echo "fm-send: $target is busy; waiting up to ${wait_s}s for idle before delivering text (set FM_SEND_BUSY_WAIT_SECS=0 to skip)" >&2
+        elif [ $((waited % 30)) -eq 0 ]; then
+          echo "fm-send: still waiting on busy $target (${waited}s/${wait_s}s)" >&2
+        fi
+        sleep "$poll_s"
+        waited=$((waited + poll_s))
+        ;;
+      *)
+        if [ "$waited" -gt 0 ]; then
+          echo "fm-send: $target idle after ${waited}s; delivering text" >&2
+        fi
+        return 0
+        ;;
+    esac
+  done
+  echo "error: $target still busy after ${wait_s}s; text not sent (tried $RESOLUTION_TRIED). Interrupt the agent or raise FM_SEND_BUSY_WAIT_SECS." >&2
+  return 1
+}
+
 if [ "${1:-}" = "--key" ]; then
   if ! fm_backend_send_key "$TARGET_BACKEND" "$T" "$2" "$EXPECTED_LABEL"; then
     echo "error: key '$2' not sent to $T ($TARGET_BACKEND send failed; tried $RESOLUTION_TRIED)" >&2
     exit 1
   fi
 else
+  if ! fm_send_wait_until_idle "$TARGET_BACKEND" "$T"; then
+    exit 1
+  fi
   MESSAGE=$*
   if [ "$MARK_FROM_FIRSTMATE" = 1 ]; then
     fm_message_mark_from_firstmate "$MESSAGE" MESSAGE
