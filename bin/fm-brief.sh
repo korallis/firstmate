@@ -320,6 +320,12 @@ Two firstmate-specific rules layer on top of that guidance:
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - Avoid \`--yes\`: the captain, not you, owns the ask-user decisions it would silently auto-resolve.
 
+Hard rules for running axi (especially on Pi / Herdr — this is a known productivity killer):
+- NEVER pipe \`no-mistakes axi run\` or \`no-mistakes axi respond\` through \`tail\`, \`head\`, or similar. You must see the full TOON return.
+- NEVER wrap axi in a multi-hour shell timeout (e.g. 2400s) as a single blocking tool call that freezes your turn. If a step is long, call axi, read the return, then poll \`no-mistakes axi status\` until the next gate or outcome.
+- After every axi respond, immediately run \`no-mistakes axi status\`. If the pipeline has already moved past that step (or the run completed), do NOT re-run the same respond — continue from current status.
+- While axi is in flight, do not start unrelated long shells. Standing instructions belong in the brief before /no-mistakes starts; firstmate steers wait for idle (fm-send busy-wait) and cannot cut into a blocked shell.
+
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF
 )

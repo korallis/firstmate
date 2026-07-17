@@ -105,6 +105,26 @@ This preserves launch success instead of passing a known-bad value.
 Send the validation skill using the target harness's skill invocation form.
 Natural language is acceptable if uncertain.
 
+### Pi / long-shell steer trap (verified operationally 2026-07-17)
+
+Pi only processes queued steers after a running shell exits. Crews that run
+`no-mistakes axi respond ... 2>&1 | tail -20` with a multi-hour tool timeout
+freeze the agent for tens of minutes: firstmate `fm-send` used to report
+success while text sat as `Steering: …`, and even after busy-wait landed in
+`fm-send`, the crew still cannot act until the shell ends.
+
+Rules for crews (also generated into ship briefs by `bin/fm-brief.sh`):
+- Do not pipe `axi run` / `axi respond` through `tail`/`head`.
+- Do not use multi-hour blocking timeouts as the only progress channel.
+- After each respond, poll `no-mistakes axi status`; if the step already
+  completed, continue from current status rather than re-running respond.
+- Firstmate text steers wait for agent idle via `fm_send_wait_until_idle`
+  (`bin/fm-send-wait-lib.sh`); `--key` Escape/C-c still interrupts immediately.
+
+Claude Code and Grok Code stream tool output differently and are less prone to
+this exact freeze; the brief rules still apply so crews stay responsive on every
+harness.
+
 - claude: `/<skill>`, for example `/no-mistakes`.
 - codex: `$<skill>`, for example `$no-mistakes`; `/<skill>` is claude-only and codex rejects it as "Unrecognized command".
 - opencode: no separate verified skill invocation beyond normal slash-command behavior; use natural language if the exact skill command is uncertain.

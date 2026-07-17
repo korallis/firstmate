@@ -27,8 +27,12 @@ fm_send_wait_until_idle() {  # <backend> <target>
       busy)
         if [ "$waited" -eq 0 ]; then
           echo "fm-send: $target is busy; waiting up to ${wait_s}s for idle before delivering text (set FM_SEND_BUSY_WAIT_SECS=0 to skip)" >&2
-        elif [ $((waited % 30)) -eq 0 ]; then
-          echo "fm-send: still waiting on busy $target (${waited}s/${wait_s}s)" >&2
+        else
+          # Emit progress every ~30s of wall time, independent of poll interval
+          # (poll_s may not divide 30; e.g. poll_s=7 never hits waited%30==0).
+          if [ $((waited % 30)) -lt "$poll_s" ]; then
+            echo "fm-send: still waiting on busy $target (${waited}s/${wait_s}s)" >&2
+          fi
         fi
         sleep "$poll_s"
         waited=$((waited + poll_s))
