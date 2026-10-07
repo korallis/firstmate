@@ -222,10 +222,9 @@ A parent created by the refused placement is closed again while it is still empt
 
 ### Settings
 
-`config/herdr-presentation-spaces` keeps its values: `off` opts the home out of every one-task-workspace layout, grouping included, and any other value leaves the floor to decide.
+Native grouping has no opt-out: on a release at or above the floor every clean fresh crewmate or scout, and every reclaimed endpoint, is grouped.
+`config/herdr-presentation-spaces` keeps its values and governs only the projection that applies below the floor; it is inherited into secondmate homes exactly as before.
 There is no setting that forces grouping below the floor, because the open itself is unsafe there.
-The environment override `FM_BACKEND_HERDR_WORKTREE_GROUPS=off` is a diagnostic that keeps the pre-0.9.2 layouts reachable; the projection's regression suites set it.
-The setting is inherited into secondmate homes exactly as before.
 
 ### Cleanup, restart, and reclaim
 
@@ -242,7 +241,7 @@ Native grouping replaces the projection below as the default one-task layout on 
 The projection's machinery exists to simulate grouping on releases without it: a random token in the title to re-find a workspace after a restart, best-effort reordering next to the home workspace, a journal to bind and reclaim it, and a session-start sweep for stale titles.
 A native child needs none of that, because Herdr binds it to its checkout path, which is unique per open workspace, groups it itself, and restores the membership with the session.
 Binding a native child to the projection's home-parent block predicate would also be wrong, because Herdr orders children under the repository parent, not the home.
-The projection is therefore untouched and remains the layout below the 0.9.2 floor, on an explicit `on` below its own 0.8.0 floor, under the diagnostic override, and for every task that already holds a presentation journal.
+The projection is therefore untouched and remains the layout below the 0.9.2 floor, on an explicit `on` below its own 0.8.0 floor, and for every task that already holds a presentation journal.
 Such a task keeps its journal, its workspace, and every recovery path it had, and is never moved.
 
 ### Operational compromises
@@ -257,7 +256,7 @@ Such a task keeps its journal, its workspace, and every recovery path it had, an
 | Test | What it covers |
 | --- | --- |
 | `tests/fm-backend-herdr.test.sh` | The floor classifier and gate, the one-per-release warning, parent labels, grouped placement, adoption, the hijack refusals, parent ambiguity, and exact cleanup, against a stateful fake. |
-| `tests/fm-backend-herdr-worktree-groups-e2e.test.sh` | Two tasks of one project and one of another grouped under one parent each, a reclaim landing back in its group, a secondmate-shaped home's own parent, both fallbacks, the never-adopted home workspace, and teardown, through the real spawn and teardown scripts in a guarded lab; below the floor it proves the fallback instead. |
+| `tests/fm-backend-herdr-worktree-groups-e2e.test.sh` | Two tasks of one project and one of another grouped under one parent each, a reclaim landing back in its group, a secondmate-shaped home's own parent, grouping that a config `off` leaves in place, the never-adopted home workspace, and teardown, through the real spawn and teardown scripts in a guarded lab; below the floor it proves the fallback instead. |
 
 [`verification/runtime-backends.md`](verification/runtime-backends.md#worktree-groups) owns the dated evidence.
 
@@ -265,7 +264,7 @@ Such a task keeps its journal, its workspace, and every recovery path it had, an
 
 On Herdr 0.8.0 through 0.9.1, each new crewmate or scout is placed in a disposable one-task workspace by default.
 This section calls that one-task workspace the projection.
-From Herdr 0.9.2, [Worktree groups](#worktree-groups) replace the projection for new tasks; this section then governs tasks that already hold a presentation journal, an explicit `on` below the projection's own floor, and the diagnostic override.
+From Herdr 0.9.2, [Worktree groups](#worktree-groups) replace the projection for new tasks; this section then governs tasks that already hold a presentation journal, and an explicit `on` below the projection's own floor.
 Without the projection, tasks use the ordinary flat layout described under [Watching and task containers](#watching-and-task-containers).
 
 ### Setting values

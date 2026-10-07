@@ -134,9 +134,8 @@
 #   it; a refusal before any Herdr mutation returns the lease and takes the
 #   projection or flat path below, a failure after a create is a spawn failure
 #   with exact-id cleanup, and --relaunch's rebind re-opens the recorded
-#   worktree under the same parent. config/herdr-presentation-spaces "off"
-#   opts out of grouping too, and FM_BACKEND_HERDR_WORKTREE_GROUPS=off is the
-#   diagnostic override that keeps the earlier layouts reachable.
+#   worktree under the same parent. config/herdr-presentation-spaces governs
+#   only the projection below that floor, never native grouping.
 #   Below that floor Herdr uses a presentation-only layout by default when the
 #   selected client and running server meet the Herdr 0.8.0 floor. The local
 #   config/herdr-presentation-spaces file can say off to disable it or on to
@@ -3813,17 +3812,21 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # (fm_control_endpoint_absence_verdict owns that argument). tmux and every
     # secondmate were already refused, so there is no dispatch left to make.
     #
-    # This deliberately uses the FLAT container shape rather than Herdr's
-    # presentation projection: projection is a presentation-only layout that is
-    # never endpoint or ownership authority, and flat is already the documented
-    # fallback for every recovery it cannot bind exactly
-    # (docs/herdr-backend.md "Presentation spaces").
+    # On a release that supports native worktree groups the rebind first
+    # places the endpoint in its project's group (docs/herdr-backend.md
+    # "Worktree groups") and arms the same exact-id abort cleanup a fresh
+    # grouped spawn does. Every refusal falls back to the FLAT container shape
+    # rather than Herdr's presentation projection: projection is a
+    # presentation-only layout that is never endpoint or ownership authority,
+    # and flat is already the documented fallback for every recovery it cannot
+    # bind exactly (docs/herdr-backend.md "Presentation spaces").
     #
-    # KNOWN LIMITATION (bead fm-herdr-rebind-leak-20260913): the tab minted
-    # below is registered with no abort cleanup, so a later refusal leaves that
-    # pane behind and a retry mints another. Documented in
-    # docs/agent-control.md rather than fixed here, because the remedy is
-    # machinery the ordinary flat spawn path does not have either.
+    # KNOWN LIMITATION of that flat fallback (bead
+    # fm-herdr-rebind-leak-20260913): the flat tab is registered with no abort
+    # cleanup, so a later refusal leaves that pane behind and a retry mints
+    # another. Documented in docs/agent-control.md rather than fixed here,
+    # because the remedy is machinery the ordinary flat spawn path does not
+    # have either.
     #
     # Re-create the tab under the RECORDED herdr session. Without the explicit
     # session the container would resolve from the AMBIENT one
@@ -3836,28 +3839,29 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # release that supports native grouping (docs/herdr-backend.md "Worktree
     # groups"): the recorded worktree is re-opened, or its surviving child
     # workspace adopted, under the project's parent in the RECORDED session.
-    # Every refusal falls back to the flat container below, exactly as before.
+    # A placement keeps the session lock through the launch line, exactly as
+    # the projection does. Every refusal falls back to the flat container below.
     HERDR_GROUPED=0
-    if [ "${FM_BACKEND_HERDR_WORKTREE_GROUPS:-on}" != off ]; then
-      fm_backend_herdr_version_check || exit 1
-      if ! fm_backend_herdr_server_ensure "$HERDR_REBIND_SES"; then
-        echo "warning: herdr worktree group could not ensure the recorded session's server; re-creating the endpoint in the flat container" >&2
-      elif fm_backend_herdr_worktree_group_enabled "$CONFIG" "$STATE" "$HERDR_REBIND_SES"; then
-        if spawn_herdr_presentation_order_lock_acquire "$HERDR_REBIND_SES"; then
-          if spawn_herdr_group_place "$HERDR_REBIND_SES" "$FM_HOME" "$WT"; then
-            HERDR_GROUP_PLACE_STATUS=0
-          else
-            HERDR_GROUP_PLACE_STATUS=$?
-          fi
-          spawn_herdr_presentation_order_lock_release
-          case "$HERDR_GROUP_PLACE_STATUS" in
-          0) ;;
-          2) echo "warning: herdr worktree group placement was refused for the reclaim of $ID; re-creating the endpoint in the flat container" >&2 ;;
-          *) exit 1 ;;
-          esac
+    fm_backend_herdr_version_check || exit 1
+    if ! fm_backend_herdr_server_ensure "$HERDR_REBIND_SES"; then
+      echo "warning: herdr worktree group could not ensure the recorded session's server; re-creating the endpoint in the flat container" >&2
+    elif fm_backend_herdr_worktree_group_enabled "$STATE" "$HERDR_REBIND_SES"; then
+      if spawn_herdr_presentation_order_lock_acquire "$HERDR_REBIND_SES"; then
+        if spawn_herdr_group_place "$HERDR_REBIND_SES" "$FM_HOME" "$WT"; then
+          HERDR_GROUP_PLACE_STATUS=0
         else
-          echo "warning: herdr session lock unavailable; re-creating $ID's endpoint in the flat container" >&2
+          HERDR_GROUP_PLACE_STATUS=$?
         fi
+        case "$HERDR_GROUP_PLACE_STATUS" in
+        0) ;;
+        2)
+          spawn_herdr_presentation_order_lock_release
+          echo "warning: herdr worktree group placement was refused for the reclaim of $ID; re-creating the endpoint in the flat container" >&2
+          ;;
+        *) exit 1 ;;
+        esac
+      else
+        echo "warning: herdr session lock unavailable; re-creating $ID's endpoint in the flat container" >&2
       fi
     fi
     if [ "$HERDR_GROUPED" -ne 1 ]; then
@@ -3952,19 +3956,18 @@ else
     # child with that slot as its cwd; the in-pane `treehouse get` further down
     # is skipped for it. A refusal before any Herdr mutation returns the lease
     # and falls through to the projection or flat decision below; a failure
-    # after a create is a spawn failure with same-process exact cleanup.
-    # FM_BACKEND_HERDR_WORKTREE_GROUPS=off is the diagnostic override that keeps
-    # the pre-0.9.2 layouts reachable for their regression suites.
+    # after a create is a spawn failure with same-process exact cleanup. A
+    # placement keeps the session lock through the launch line, exactly as the
+    # projection does.
     HERDR_GROUPED=0
     if [ "$KIND" != secondmate ] \
        && [ ! -e "$HERDR_PRESENTATION_JOURNAL" ] && [ ! -L "$HERDR_PRESENTATION_JOURNAL" ] \
-       && [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ] \
-       && [ "${FM_BACKEND_HERDR_WORKTREE_GROUPS:-on}" != off ]; then
+       && [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ]; then
       HERDR_SES=$(fm_backend_herdr_session)
       fm_backend_herdr_version_check || exit 1
       if ! fm_backend_herdr_server_ensure "$HERDR_SES"; then
         echo "warning: herdr worktree group could not ensure its session server; using the ordinary layout" >&2
-      elif fm_backend_herdr_worktree_group_enabled "$CONFIG" "$STATE" "$HERDR_SES"; then
+      elif fm_backend_herdr_worktree_group_enabled "$STATE" "$HERDR_SES"; then
         if spawn_herdr_presentation_order_lock_acquire "$HERDR_SES"; then
           HERDR_GROUP_WT=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "fm-$ID") || HERDR_GROUP_WT=
           if [ -z "$HERDR_GROUP_WT" ]; then
@@ -3989,10 +3992,10 @@ else
           else
             HERDR_GROUP_PLACE_STATUS=$?
           fi
-          spawn_herdr_presentation_order_lock_release
           case "$HERDR_GROUP_PLACE_STATUS" in
           0) ;;
           2)
+            spawn_herdr_presentation_order_lock_release
             # Nothing was created; give the slot back and take the ordinary
             # path, whose own in-pane acquisition allocates afresh.
             if [ "$SPAWN_SLOT_CLAIMED" = 1 ]; then

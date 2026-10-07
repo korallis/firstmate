@@ -5,9 +5,9 @@
 # linked worktree child workspace under ONE parent workspace per project, a
 # reclaimed endpoint lands back in that group, a secondmate-shaped home's tasks
 # group under that home's own project parents, a flat home workspace sitting in
-# the project is never adopted as a parent, the diagnostic override and the
-# config opt-out keep the pre-0.9.2 layouts reachable, and teardown removes
-# exactly the children while the parents stay. Below the floor the same suite
+# the project is never adopted as a parent, config/herdr-presentation-spaces
+# "off" leaves native grouping in place, and teardown removes exactly the
+# children while the parents stay. Below the floor the same suite
 # proves the fallback instead. It drives the REAL bin/fm-spawn.sh and
 # bin/fm-teardown.sh, a real Treehouse pool, and the guarded named-session lab
 # helper; every Herdr read the suite makes itself goes through that helper.
@@ -31,7 +31,7 @@ command -v treehouse >/dev/null 2>&1 || { echo "skip: treehouse not found"; exit
 # inherited from the terminal it was launched in must not follow spawn into it
 # as a cross-session parent identity.
 herdr_forget_inherited_pane
-unset FM_BACKEND_HERDR_WORKTREE_GROUPS
+unset FM_TEST_HERDR_WORKTREE_GROUPS
 
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-herdr-wtgroups.XXXXXX")
 # The reclaim below relaunches onto an inert replacement harness. A pane shell
@@ -162,7 +162,7 @@ PROJECT_A="$TMP_ROOT/alpha"
 PROJECT_B="$TMP_ROOT/beta"
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/config"
 touch "$HOME_DIR/state/.last-watcher-beat"
-for id in a1 a2 a3 b1 flat-env flat-off; do
+for id in a1 a2 a3 b1 flat-home off-grouped; do
   write_ship_brief "$HOME_DIR" "$id"
 done
 make_project "$PROJECT_A"
@@ -303,29 +303,31 @@ assert_child_of "sm1" "$SM1_WS" "$SM1_WT" "$PARENT_SM"
 evidence "secondmate-shaped home: sm1 is $SM1_WS under $PARENT_SM labeled '$(workspace_entry "$PARENT_SM" | jq -r .label)', distinct from the primary's alpha parent $PARENT_A"
 pass "real herdr $HERDR_VERSION: a secondmate-shaped home's task groups under that home's own project parent"
 
-# --- 4. fallbacks stay reachable: the diagnostic override and the config opt-out ---
+# --- 4. config/herdr-presentation-spaces "off" governs only the projection ---
 
-FM_BACKEND_HERDR_WORKTREE_GROUPS=off spawn_task flat-env "$HOME_DIR" "$PROJECT_A" \
-  > "$TMP_ROOT/flat-env.out" 2> "$TMP_ROOT/flat-env.err" \
-  || fail "override spawn failed: $(cat "$TMP_ROOT/flat-env.err")"
-FLAT_ENV_META="$HOME_DIR/state/flat-env.meta"
-remember_worktree "$FLAT_ENV_META" "$PROJECT_A" >/dev/null
-FLAT_ENV_WS=$(meta_field "$FLAT_ENV_META" herdr_workspace_id)
-assert_not_grouped "$FLAT_ENV_WS" "override spawn"
+# The per-home flat workspace case 5 needs is the pre-0.9.2 layout, reached
+# here only through the worktree-group test seam.
+FM_TEST_SEAM=1 FM_TEST_HERDR_WORKTREE_GROUPS=off spawn_task flat-home "$HOME_DIR" "$PROJECT_A" \
+  > "$TMP_ROOT/flat-home.out" 2> "$TMP_ROOT/flat-home.err" \
+  || fail "flat home fixture spawn failed: $(cat "$TMP_ROOT/flat-home.err")"
+FLAT_HOME_META="$HOME_DIR/state/flat-home.meta"
+remember_worktree "$FLAT_HOME_META" "$PROJECT_A" >/dev/null
+FLAT_HOME_WS=$(meta_field "$FLAT_HOME_META" herdr_workspace_id)
+assert_not_grouped "$FLAT_HOME_WS" "flat home fixture spawn"
 HOME_WS=$(workspaces | jq -r '[.[] | select(.label == "firstmate")] | if length == 1 then .[0].workspace_id else "" end')
-[ -n "$HOME_WS" ] || fail "the override spawn did not take the ordinary per-home layout: $(workspaces)"
-[ "$FLAT_ENV_WS" = "$HOME_WS" ] || fail "the override spawn landed in $FLAT_ENV_WS rather than the home workspace $HOME_WS"
-pass "real herdr $HERDR_VERSION: FM_BACKEND_HERDR_WORKTREE_GROUPS=off keeps the pre-0.9.2 layout reachable"
+[ -n "$HOME_WS" ] || fail "the flat home fixture spawn did not take the per-home layout: $(workspaces)"
+[ "$FLAT_HOME_WS" = "$HOME_WS" ] || fail "the flat home fixture spawn landed in $FLAT_HOME_WS rather than the home workspace $HOME_WS"
 
 printf 'off\n' > "$HOME_DIR/config/herdr-presentation-spaces"
-spawn_task flat-off "$HOME_DIR" "$PROJECT_A" > "$TMP_ROOT/flat-off.out" 2> "$TMP_ROOT/flat-off.err" \
-  || fail "opted-out spawn failed: $(cat "$TMP_ROOT/flat-off.err")"
-FLAT_OFF_META="$HOME_DIR/state/flat-off.meta"
-remember_worktree "$FLAT_OFF_META" "$PROJECT_A" >/dev/null
-[ "$(meta_field "$FLAT_OFF_META" herdr_workspace_id)" = "$HOME_WS" ] \
-  || fail "the opted-out spawn did not land in the home workspace: $(workspaces)"
+spawn_task off-grouped "$HOME_DIR" "$PROJECT_A" > "$TMP_ROOT/off-grouped.out" 2> "$TMP_ROOT/off-grouped.err" \
+  || fail "config-off spawn failed: $(cat "$TMP_ROOT/off-grouped.err")"
+OFF_META="$HOME_DIR/state/off-grouped.meta"
+OFF_WT=$(remember_worktree "$OFF_META" "$PROJECT_A")
+OFF_WS=$(meta_field "$OFF_META" herdr_workspace_id)
 rm -f "$HOME_DIR/config/herdr-presentation-spaces"
-pass "real herdr $HERDR_VERSION: config/herdr-presentation-spaces off opts the home out of grouping"
+[ "$(parent_for "$PROJECT_A")" = "$PARENT_A" ] || fail "the config-off spawn did not reuse project A's parent"
+assert_child_of "config-off spawn" "$OFF_WS" "$OFF_WT" "$PARENT_A"
+pass "real herdr $HERDR_VERSION: config/herdr-presentation-spaces off leaves native worktree grouping in place"
 
 # --- 5. a flat home workspace sitting in the project is never adopted as a parent ---
 
@@ -341,14 +343,14 @@ pass "real herdr $HERDR_VERSION: the per-home workspace sitting in the project i
 
 # --- 6. teardown removes exactly the children; the parents stay ---------------
 
-for id in a1 a2 a3 b1 flat-env flat-off; do
+for id in a1 a2 a3 b1 flat-home off-grouped; do
   teardown_task "$id" "$HOME_DIR" > "$TMP_ROOT/$id-td.out" 2> "$TMP_ROOT/$id-td.err" \
     || fail "teardown $id failed: $(cat "$TMP_ROOT/$id-td.err")"
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "teardown $id left its metadata"
 done
 teardown_task sm1 "$SM_HOME" > "$TMP_ROOT/sm1-td.out" 2> "$TMP_ROOT/sm1-td.err" \
   || fail "teardown sm1 failed: $(cat "$TMP_ROOT/sm1-td.err")"
-for ws in "$A1_WS2" "$A2_WS" "$A3_WS" "$B1_WS" "$SM1_WS"; do
+for ws in "$A1_WS2" "$A2_WS" "$A3_WS" "$B1_WS" "$OFF_WS" "$SM1_WS"; do
   workspace_present "$ws" && fail "teardown left child workspace $ws open: $(workspaces)"
 done
 for parent in "$PARENT_A" "$PARENT_B" "$PARENT_SM"; do

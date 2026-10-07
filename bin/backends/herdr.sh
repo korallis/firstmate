@@ -117,20 +117,23 @@ fm_backend_herdr_worktree_group_floor_warn() {  # <state-dir> <verdict>
   echo "warning: $reason; grouping task workspaces under their project is unavailable, so the presentation projection or the ordinary flat layout is used instead. Upgrade herdr to $FM_BACKEND_HERDR_MIN_WORKTREE_GROUP_VERSION or newer (herdr update) to restore native worktree groups." >&2
 }
 
-# fm_backend_herdr_worktree_group_enabled <config-dir> <state-dir> <session>:
-# the one gate deciding whether a clean fresh crewmate or scout, or a reclaimed
-# endpoint, is placed as a native linked-worktree child under its project's
-# parent workspace in <session>. config/herdr-presentation-spaces "off" opts the
-# home out of every one-task-workspace layout, native grouping included; any
-# other value leaves the floor above to decide. There is deliberately no "on"
-# that forces native grouping below the floor: below it the open itself is
-# unsafe (see the header), so the projection's own opt-in semantics apply to the
-# projection only. Returns 0 to place natively, 1 to fall through to the
-# projection decision or the flat layout, after the one-per-release warning.
-fm_backend_herdr_worktree_group_enabled() {  # <config-dir> <state-dir> <session>
-  local config_dir=$1 state_dir=$2 session=$3 preference verdict=0
-  preference=$(fm_backend_herdr_presentation_preference "$config_dir")
-  [ "$preference" != off ] || return 1
+# fm_backend_herdr_worktree_group_enabled <state-dir> <session>: the one gate
+# deciding whether a clean fresh crewmate or scout, or a reclaimed endpoint, is
+# placed as a native linked-worktree child under its project's parent workspace
+# in <session>. Native grouping is how every supported release lays tasks out:
+# config/herdr-presentation-spaces governs only the projection below the floor,
+# never this gate, and there is no "on" that forces native grouping below the
+# floor either, because below it the open itself is unsafe (see the header).
+# FM_TEST_HERDR_WORKTREE_GROUPS=off, read only alongside the FM_TEST_SEAM
+# marker, is the test seam that keeps the pre-0.9.2 layouts' regression suites
+# running on a supported release. Returns 0 to place natively, 1 to fall
+# through to the projection decision or the flat layout, after the
+# one-per-release warning.
+fm_backend_herdr_worktree_group_enabled() {  # <state-dir> <session>
+  local state_dir=$1 session=$2 verdict=0
+  if [ "${FM_TEST_SEAM:-}" = 1 ] && [ "${FM_TEST_HERDR_WORKTREE_GROUPS:-}" = off ]; then
+    return 1
+  fi
   fm_backend_herdr_worktree_group_release_supported "$session" || verdict=$?
   [ "$verdict" -ne 0 ] || return 0
   fm_backend_herdr_worktree_group_floor_warn "$state_dir" "$verdict"
