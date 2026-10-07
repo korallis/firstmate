@@ -6120,20 +6120,24 @@ test_worktree_group_enabled_gate_and_one_warning() {
   dir=$(groupfake_env wtg-gate)
   make_herdr_groupfake "$dir" >/dev/null
   printf 'off\n' > "$dir/config/herdr-presentation-spaces"
-  status=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s"' FM_FAKE_HERDR_VERSION=0.9.3)
-  [ "$status" = 0 ] || fail "config off governs only the projection and must not disable worktree groups, got $status"
+  status=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/config"'" "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s"' FM_FAKE_HERDR_VERSION=0.9.3)
+  [ "$status" = 1 ] || fail "config off must opt the home out of worktree groups too, got $status"
+  [ ! -s "$dir/log" ] || fail "config off should decide without consulting herdr: $(cat "$dir/log")"
+  printf 'on\n' > "$dir/config/herdr-presentation-spaces"
+  status=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/config"'" "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s"' FM_FAKE_HERDR_VERSION=0.9.3)
+  [ "$status" = 0 ] || fail "a value other than off must leave grouping on, got $status"
   rm -f "$dir/config/herdr-presentation-spaces"
-  status=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s"' FM_FAKE_HERDR_VERSION=0.9.3 FM_TEST_SEAM= FM_TEST_HERDR_WORKTREE_GROUPS=off)
+  status=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/config"'" "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s"' FM_FAKE_HERDR_VERSION=0.9.3 FM_TEST_SEAM= FM_TEST_HERDR_WORKTREE_GROUPS=off)
   [ "$status" = 0 ] || fail "the worktree-group test seam must stay inert without FM_TEST_SEAM, got $status"
-  status=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s"' FM_FAKE_HERDR_VERSION=0.9.3)
+  status=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/config"'" "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s"' FM_FAKE_HERDR_VERSION=0.9.3)
   [ "$status" = 0 ] || fail "an unconfigured home on 0.9.3 should group, got $status"
-  err=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s" >/dev/null' FM_FAKE_HERDR_VERSION=0.9.1 2>&1)
+  err=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/config"'" "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s" >/dev/null' FM_FAKE_HERDR_VERSION=0.9.1 2>&1)
   assert_contains "$err" "older than the 0.9.2 floor for native worktree groups" "a 0.9.1 release did not warn about the worktree-group floor"
   assert_contains "$err" "#4293" "the floor warning did not name the upstream issue the floor exists for"
   ls "$dir/state"/.herdr-worktree-group-floor-* >/dev/null 2>&1 || fail "the floor warning did not record its one-per-release marker"
-  err=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s" >/dev/null' FM_FAKE_HERDR_VERSION=0.9.1 2>&1)
+  err=$(groupfake_run "$dir" 's=0; fm_backend_herdr_worktree_group_enabled "'"$dir/config"'" "'"$dir/state"'" fmtest || s=$?; printf "%s" "$s" >/dev/null' FM_FAKE_HERDR_VERSION=0.9.1 2>&1)
   [ -z "$err" ] || fail "the same release warned twice: $err"
-  pass "fm_backend_herdr_worktree_group_enabled: 0.9.3 groups even with config off, 0.9.1 falls back with one named warning per release"
+  pass "fm_backend_herdr_worktree_group_enabled: off opts out before any herdr call, on or absent groups on 0.9.3, 0.9.1 falls back with one named warning per release"
 }
 
 # Bodies are bash -c sources, so their single-quoted $ expansions are

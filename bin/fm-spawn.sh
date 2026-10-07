@@ -134,8 +134,9 @@
 #   it; a refusal before any Herdr mutation returns the lease and takes the
 #   projection or flat path below, a failure after a create is a spawn failure
 #   with exact-id cleanup, and --relaunch's rebind re-opens the recorded
-#   worktree under the same parent. config/herdr-presentation-spaces governs
-#   only the projection below that floor, never native grouping.
+#   worktree under the same parent. config/herdr-presentation-spaces "off" is
+#   the one opt-out and opts the home out of native grouping too; an absent
+#   file or any other value leaves grouping on.
 #   Below that floor Herdr uses a presentation-only layout by default when the
 #   selected client and running server meet the Herdr 0.8.0 floor. The local
 #   config/herdr-presentation-spaces file can say off to disable it or on to
@@ -3845,7 +3846,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     fm_backend_herdr_version_check || exit 1
     if ! fm_backend_herdr_server_ensure "$HERDR_REBIND_SES"; then
       echo "warning: herdr worktree group could not ensure the recorded session's server; re-creating the endpoint in the flat container" >&2
-    elif fm_backend_herdr_worktree_group_enabled "$STATE" "$HERDR_REBIND_SES"; then
+    elif fm_backend_herdr_worktree_group_enabled "$CONFIG" "$STATE" "$HERDR_REBIND_SES"; then
       if spawn_herdr_presentation_order_lock_acquire "$HERDR_REBIND_SES"; then
         if spawn_herdr_group_place "$HERDR_REBIND_SES" "$FM_HOME" "$WT"; then
           HERDR_GROUP_PLACE_STATUS=0
@@ -3967,7 +3968,7 @@ else
       fm_backend_herdr_version_check || exit 1
       if ! fm_backend_herdr_server_ensure "$HERDR_SES"; then
         echo "warning: herdr worktree group could not ensure its session server; using the ordinary layout" >&2
-      elif fm_backend_herdr_worktree_group_enabled "$STATE" "$HERDR_SES"; then
+      elif fm_backend_herdr_worktree_group_enabled "$CONFIG" "$STATE" "$HERDR_SES"; then
         if spawn_herdr_presentation_order_lock_acquire "$HERDR_SES"; then
           HERDR_GROUP_WT=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "fm-$ID") || HERDR_GROUP_WT=
           if [ -z "$HERDR_GROUP_WT" ]; then

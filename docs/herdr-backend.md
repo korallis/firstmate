@@ -222,8 +222,8 @@ A parent created by the refused placement is closed again while it is still empt
 
 ### Settings
 
-Native grouping has no opt-out: on a release at or above the floor every clean fresh crewmate or scout, and every reclaimed endpoint, is grouped.
-`config/herdr-presentation-spaces` keeps its values and governs only the projection that applies below the floor; it is inherited into secondmate homes exactly as before.
+Native grouping is the default at or above the floor, and `off` is its one opt-out: every clean fresh crewmate or scout, and every reclaimed endpoint, is grouped unless `config/herdr-presentation-spaces` says `off`.
+That `off` opts the home out of every one-task-workspace layout, grouping included, so a home that already said it keeps its flat layout and is never regrouped without consent; an absent file or any other value leaves the floor to decide, and the file is inherited into secondmate homes exactly as before.
 There is no setting that forces grouping below the floor, because the open itself is unsafe there.
 
 ### Cleanup, restart, and reclaim
@@ -256,7 +256,7 @@ Such a task keeps its journal, its workspace, and every recovery path it had, an
 | Test | What it covers |
 | --- | --- |
 | `tests/fm-backend-herdr.test.sh` | The floor classifier and gate, the one-per-release warning, parent labels, grouped placement, adoption, the hijack refusals, parent ambiguity, and exact cleanup, against a stateful fake. |
-| `tests/fm-backend-herdr-worktree-groups-e2e.test.sh` | Two tasks of one project and one of another grouped under one parent each, a reclaim landing back in its group, a secondmate-shaped home's own parent, grouping that a config `off` leaves in place, the never-adopted home workspace, and teardown, through the real spawn and teardown scripts in a guarded lab; below the floor it proves the fallback instead. |
+| `tests/fm-backend-herdr-worktree-groups-e2e.test.sh` | Two tasks of one project and one of another grouped under one parent each, a reclaim landing back in its group, a secondmate-shaped home's own parent, a config `off` that takes the flat layout instead of grouping, the never-adopted home workspace, and teardown, through the real spawn and teardown scripts in a guarded lab; below the floor it proves the fallback instead. |
 
 [`verification/runtime-backends.md`](verification/runtime-backends.md#worktree-groups) owns the dated evidence.
 
@@ -264,7 +264,7 @@ Such a task keeps its journal, its workspace, and every recovery path it had, an
 
 On Herdr 0.8.0 through 0.9.1, each new crewmate or scout is placed in a disposable one-task workspace by default.
 This section calls that one-task workspace the projection.
-From Herdr 0.9.2, [Worktree groups](#worktree-groups) replace the projection for new tasks; this section then governs tasks that already hold a presentation journal, and an explicit `on` below the projection's own floor.
+From Herdr 0.9.2, [Worktree groups](#worktree-groups) replace the projection for new tasks; this section then governs tasks that already hold a presentation journal, an explicit `on` below the projection's own floor, and the `off` that opts a home out of both layouts.
 Without the projection, tasks use the ordinary flat layout described under [Watching and task containers](#watching-and-task-containers).
 
 ### Setting values
@@ -274,7 +274,7 @@ The local gitignored `config/herdr-presentation-spaces` file controls the projec
 | File state | Result |
 | --- | --- |
 | Absent | Leaves the choice to the version floor below (the unconfigured default). |
-| `off` | Opts the home out. |
+| `off` | Opts the home out of the projection and, on Herdr 0.9.2 and newer, of [worktree groups](#worktree-groups) too. |
 | `on` | Forces the projection on, as a deliberate opt-in. |
 | Empty | A deliberate opt-in, the same as `on`. |
 | Any other value | Warns and follows the unconfigured default rather than failing a spawn over a purely visual setting. |
