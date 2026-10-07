@@ -110,7 +110,7 @@ A secondmate launched by the primary receives a narrowly scoped home override du
 
 ### Watching tasks
 
-Attach to the selected named Herdr session and switch to the relevant home workspace to watch its task tabs.
+Attach to the selected named Herdr session and switch to the relevant home workspace to watch its task tabs, or, for a task placed in a [worktree group](#worktree-groups), to its child workspace under the project's parent row.
 Routine supervision uses `bin/fm-peek.sh <id>` and `FM_HOME=<home> bin/fm-send.sh <id> '<text>'` without attaching.
 
 ### Focus
@@ -127,7 +127,7 @@ Herdr 0.7.5 exports `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_SESSION`, `HERDR_SOCKET
 A Firstmate or secondmate agent's own commands inherit them.
 Older injection shapes are unverified, so a claimed launcher pane without the injected socket identity cannot be trusted.
 
-With presentation spaces disabled, a crewmate or scout is created in the exact workspace that identity currently resolves to.
+Without a [worktree group](#worktree-groups) placement and with presentation spaces disabled, a crewmate or scout is created in the exact workspace that identity currently resolves to.
 That workspace is read live from Herdr rather than from the injected snapshot, so the worker always appears beside the agent that launched it.
 Duplicate labels elsewhere in the session are irrelevant, and the globally focused workspace is never the target.
 A `--secondmate` launch is the deliberate exception: it stands up that secondmate home's own workspace instead of joining the launcher's.
