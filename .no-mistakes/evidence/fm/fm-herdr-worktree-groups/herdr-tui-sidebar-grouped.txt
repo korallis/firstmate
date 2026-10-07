@@ -1,0 +1,40 @@
+ spaces                  │   1      +
+                         │
+ · webapp               ▾│󰕈 lee …/webapp   main   20:48  ❯
+   main                  │
+   ├─ · fix-login        │
+   └─ · add-cache        │
+ · api                  ▾│
+   main                  │
+   └─ · bump-deps        │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+ new                 menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

@@ -1,0 +1,107 @@
+session=fm-lab-wtg-manual-2381344-15578 tmp=/tmp/fm-manual-wtg/run.IMSFxF
+== scenario: three spawns across two projects
+fix-login -> workspace w2 worktree /home/lee/.treehouse/webapp-a5b988/1/webapp
+add-cache -> workspace w3 worktree /home/lee/.treehouse/webapp-a5b988/2/webapp
+bump-deps -> workspace w5 worktree /home/lee/.treehouse/api-9dcd70/1/api
+workspace list:
+[
+  {
+    "workspace_id": "w1",
+    "label": "webapp",
+    "tab_count": 1,
+    "checkout": "/tmp/fm-manual-wtg/run.IMSFxF/webapp",
+    "linked": false
+  },
+  {
+    "workspace_id": "w2",
+    "label": "fix-login",
+    "tab_count": 1,
+    "checkout": "/home/lee/.treehouse/webapp-a5b988/1/webapp",
+    "linked": true
+  },
+  {
+    "workspace_id": "w3",
+    "label": "add-cache",
+    "tab_count": 1,
+    "checkout": "/home/lee/.treehouse/webapp-a5b988/2/webapp",
+    "linked": true
+  },
+  {
+    "workspace_id": "w4",
+    "label": "api",
+    "tab_count": 1,
+    "checkout": "/tmp/fm-manual-wtg/run.IMSFxF/api",
+    "linked": false
+  },
+  {
+    "workspace_id": "w5",
+    "label": "bump-deps",
+    "tab_count": 1,
+    "checkout": "/home/lee/.treehouse/api-9dcd70/1/api",
+    "linked": true
+  }
+]
+herdr worktree list --cwd webapp:
+[{"path":"/tmp/fm-manual-wtg/run.IMSFxF/webapp","is_linked_worktree":false,"open_workspace_id":"w1"},{"path":"/home/lee/.treehouse/webapp-a5b988/1/webapp","is_linked_worktree":true,"open_workspace_id":"w2"},{"path":"/home/lee/.treehouse/webapp-a5b988/2/webapp","is_linked_worktree":true,"open_workspace_id":"w3"}]
+== TUI sidebar capture (real herdr client, 120x40, private tmux socket)
+ spaces                  │   1      +
+                         │
+ · webapp               ▾│󰕈 lee …/webapp   main   20:48  ❯
+   main                  │
+   ├─ · fix-login        │
+   └─ · add-cache        │
+ · api                  ▾│
+   main                  │
+   └─ · bump-deps        │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+ new                 menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│
+== adversarial: spawn whose base branch does not exist aborts after group placement
+bad-base spawn exit=1
+  stderr: warn: no registry at /tmp/fm-manual-wtg/run.IMSFxF/home/data/projects.md; defaulting webapp to no-mistakes off
+  stderr: error: /tmp/fm-manual-wtg/run.IMSFxF/home/data/bad-base/brief.md must record Base branch: no-such-branch and no other Base branch line to spawn with --base-branch no-such-branch; scaffold it with bin/fm-brief.sh --base-branch no-such-branch
+workspace list after abort:
+{"workspace_id":"w1","label":"webapp","tab_count":1,"checkout":"/tmp/fm-manual-wtg/run.IMSFxF/webapp","linked":false}
+{"workspace_id":"w2","label":"fix-login","tab_count":1,"checkout":"/home/lee/.treehouse/webapp-a5b988/1/webapp","linked":true}
+{"workspace_id":"w3","label":"add-cache","tab_count":1,"checkout":"/home/lee/.treehouse/webapp-a5b988/2/webapp","linked":true}
+{"workspace_id":"w4","label":"api","tab_count":1,"checkout":"/tmp/fm-manual-wtg/run.IMSFxF/api","linked":false}
+{"workspace_id":"w5","label":"bump-deps","tab_count":1,"checkout":"/home/lee/.treehouse/api-9dcd70/1/api","linked":true}
+RESULT: workspace list unchanged by aborted spawn
+RESULT: no bad-base meta
+treehouse leases on webapp:
+unknown command "list" for "treehouse"
+== teardown one child; parent & siblings stay
+teardown exit=0
+{"workspace_id":"w1","label":"webapp","tab_count":1,"checkout":"/tmp/fm-manual-wtg/run.IMSFxF/webapp","linked":false}
+{"workspace_id":"w3","label":"add-cache","tab_count":1,"checkout":"/home/lee/.treehouse/webapp-a5b988/2/webapp","linked":true}
+{"workspace_id":"w4","label":"api","tab_count":1,"checkout":"/tmp/fm-manual-wtg/run.IMSFxF/api","linked":false}
+{"workspace_id":"w5","label":"bump-deps","tab_count":1,"checkout":"/home/lee/.treehouse/api-9dcd70/1/api","linked":true}
+lab torn down

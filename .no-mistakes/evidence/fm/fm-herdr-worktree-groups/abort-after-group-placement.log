@@ -1,0 +1,23 @@
+session=fm-lab-wtg-abort-2421245-13745
+after ok1:
+[{"workspace_id":"w1","label":"webapp","tab_count":1,"linked":false},{"workspace_id":"w2","label":"ok1","tab_count":1,"linked":true}]
+treehouse status before:
+base  main  (repository default)
+1     leased       ~/.treehouse/webapp-24b721/1/webapp  (detached)  (held by fm-ok1)
+                   bash (2422142), sh (2423206), sleep (2423207)
+broken spawn exit=1
+  stderr: warning: /tmp/fm-manual-wtg/abort.gQwjAA/home/data/broken/launch-brief.md records no ship branch; defaulting to legacy branch fm/broken
+  stderr: warning: /tmp/fm-manual-wtg/abort.gQwjAA/home/data/broken/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+  stderr: 🌳 Setting up worktree...
+  stderr: 🌳 Leased worktree at ~/.treehouse/webapp-24b721/2/webapp. Run 'treehouse return ~/.treehouse/webapp-24b721/2/webapp' to release it.
+  stderr: error: could not resolve origin's current default branch for pooled worktree '/home/lee/.treehouse/webapp-24b721/2/webapp'; refusing to launch from a potentially stale base
+after aborted spawn:
+[{"workspace_id":"w1","label":"webapp","tab_count":1,"linked":false},{"workspace_id":"w2","label":"ok1","tab_count":1,"linked":true}]
+RESULT: no broken.meta
+treehouse status after:
+base  main  (repository default)
+1     leased       ~/.treehouse/webapp-24b721/1/webapp  (detached)  (held by fm-ok1)
+                   bash (2422142), sh (2423206), sleep (2423207)
+2     available    ~/.treehouse/webapp-24b721/2/webapp  (detached)
+[{"path":"/tmp/fm-manual-wtg/abort.gQwjAA/webapp","open_workspace_id":"w1"},{"path":"/home/lee/.treehouse/webapp-24b721/1/webapp","open_workspace_id":"w2"},{"path":"/home/lee/.treehouse/webapp-24b721/2/webapp","open_workspace_id":null}]
+lab torn down
